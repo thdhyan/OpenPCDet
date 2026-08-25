@@ -78,7 +78,10 @@ _PROFILE_TO_CORE_ATTR = {
     # emitterState instances are applied) - dropped, not mapped.
 }
 _TOKEN_VALUES = {
-    "scanType": {"solidState": "SOLID_STATE"},
+    # JSON profiles store lowercase; the USD schema tokens are uppercase
+    # (NVIDIA's own converter authors scanType="ROTARY"/"SOLID_STATE" -
+    # Example_Rotary.usda / Example_Solid_State.usda).
+    "scanType": {"solidState": "SOLID_STATE", "rotary": "ROTARY"},
     "intensityProcessing": {"normalization": "NORMALIZATION"},
 }
 
@@ -250,16 +253,48 @@ def _profile_to_attributes(profile: dict) -> list[tuple[str, str, object]]:
     if "numRaysPerLine" in profile:
         add("numRaysPerLine", "uint[]", [int(n) for n in profile["numRaysPerLine"]])
 
+    # Report rate - NOT in the JSON->USD mapping table above because the
+    # generated profiles never carried it, but every NVIDIA-converted
+    # solid-state USD authors it (Example_Solid_State.usda:
+    # ``uint omni:sensor:Core:reportRateBaseHz = 10``, equal to
+    # patternFiringRateHz). It is not even declared in
+    # omni.usd.schema.omni_sensors' generatedSchema - plugin-internal - so an
+    # unauthored prim leaves it to the plugin's fallback. Without it the
+    # engine emitted ~1 return per render out of 5,000 emitters/state
+    # (live-isolated 2026-08-24, scripts/lidar_viz_isaacsim.py --enclose).
+    if "patternFiringRateHz" in profile:
+        add("reportRateBaseHz", "uint", int(profile["patternFiringRateHz"]))
+
+    # Per-emitter optional arrays the NVIDIA converter always writes
+    # (Example_Solid_State.usda / Simple_Example_Solid_State.usda). All zeros;
+    # matching the reference byte-for-byte removes them as variables.
+    # NOTE: states are 1-indexed (s001...) on every NVIDIA-authored USD -
+    # s000 is never used by the converter, and the applied
+    # OmniSensorGenericLidarCoreEmitterStateAPI instance name must match this
+    # index (spawn_mid360 applies :s001..).
     for i, state in enumerate(profile["emitterStates"]):
-        prefix = f"emitterState:s{i:03d}:"
+        n = len(state["azimuthDeg"])
+        zeros_f = [0.0] * n
+        prefix = f"emitterState:s{i + 1:03d}:"
         add(prefix + "azimuthDeg", "float[]", state["azimuthDeg"])
         add(prefix + "elevationDeg", "float[]", state["elevationDeg"])
-        add(prefix + "fireTimeNs", "uint[]", state["fireTimeNs"])
-        add(prefix + "channelId", "uint[]", state["channelId"])
+        if state.get("fireTimeNs"):
+            add(prefix + "fireTimeNs", "uint[]", state["fireTimeNs"])
+        # channelId is OPTIONAL - NVIDIA's Example_Rotary.json states carry
+        # only azimuthDeg/elevationDeg/fireTimeNs.
+        if state.get("channelId"):
+            add(prefix + "channelId", "uint[]", state["channelId"])
         if state.get("rangeId"):
             add(prefix + "rangeId", "uint[]", state["rangeId"])
         if state.get("bank"):
             add(prefix + "bank", "uint[]", state["bank"])
+        add(prefix + "distanceCorrectionM", "float[]", zeros_f)
+        add(prefix + "emitterPeakPowerW", "float[]", zeros_f)
+        add(prefix + "focalDistM", "float[]", zeros_f)
+        add(prefix + "focalSlope", "float[]", zeros_f)
+        add(prefix + "horOffsetM", "float[]", zeros_f)
+        add(prefix + "vertOffsetM", "float[]", zeros_f)
+        add(prefix + "reportRateDiv", "float[]", zeros_f)
 
     return out
 
@@ -313,8 +348,11 @@ def spawn_mid360(
         # why: that path star-unpacks large arrays and crashes.
         prim = stage.DefinePrim(path, "OmniLidar")
         prim.AddAppliedSchema("OmniSensorGenericLidarCoreAPI")
+        # Emitter-state instances are 1-indexed (s001...) - matches
+        # _profile_to_attributes' attribute names and every NVIDIA-authored
+        # reference USD. See the per-state note there.
         for i in range(len(profile["emitterStates"])):
-            prim.AddAppliedSchema(f"OmniSensorGenericLidarCoreEmitterStateAPI:s{i:03d}")
+            prim.AddAppliedSchema(f"OmniSensorGenericLidarCoreEmitterStateAPI:s{i + 1:03d}")
 
         for attr_name, type_key, value in entries:
             attr = prim.CreateAttribute(attr_name, sdf_types[type_key])
@@ -330,6 +368,16 @@ def spawn_mid360(
         # after creation (isaacsim.sensors.rtx's commands.py, do()) - carried
         # over here since we're not going through that command anymore.
         prim.CreateAttribute("omni:sensor:Core:accumulateOutputs", Sdf.ValueTypeNames.Bool).Set(True)
+        # GMO default elementsCoordsType is SPHERICAL: gmo.x=azimuth(deg),
+        # gmo.y=elevation(deg), gmo.z=range(m). Switch to CARTESIAN so
+        # gmo.x/y/z are metric sensor-frame Cartesian (ISO8855: +x=front,
+        # +y=left, +z=up). Without this, treating the spherical fields as
+        # x/y/z produces garbage point positions and a broken range filter.
+        # Schema token values: "CARTESIAN" | "SPHERICAL" (generatedSchema.usda,
+        # omni.sensors.nv.common-3.0.0, confirmed 2026-08-13).
+        prim.CreateAttribute(
+            "omni:sensor:Core:elementsCoordsType", Sdf.ValueTypeNames.Token
+        ).Set("CARTESIAN")
 
         xform = UsdGeom.Xformable(prim)
         xform.ClearXformOpOrder()

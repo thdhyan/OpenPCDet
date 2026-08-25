@@ -174,15 +174,25 @@ def main() -> None:
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Every prim advances through the same `frames`-long timeline in sync,
-    # each holding a different spatial slice of the current frame - see
-    # module docstring.
+    # Pre-shuffle each frame so every prim's chunk covers the full elevation
+    # range of the Mid-360 (-7°…+52°). Without this, contiguous chunks from
+    # the raw .npy land on elevation-sorted sub-bands (e.g. chunk 0 = upper
+    # hemisphere only), causing some prims to see nothing but ceiling and
+    # return 0 points. A per-frame shuffle with a fixed seed keeps the split
+    # deterministic and reproducible across runs.
+    rng = np.random.default_rng(42)
+    shuffled = []
+    for frame in range(frames):
+        frame_data = data[frame * POINTS_PER_FRAME : (frame + 1) * POINTS_PER_FRAME].copy()
+        rng.shuffle(frame_data)
+        shuffled.append(frame_data)
+
     written = []
     for prim in range(args.num_prims):
         states = []
         for frame in range(frames):
-            start = frame * POINTS_PER_FRAME + prim * emitters_per_prim
-            states.append(build_emitter_state(data[start : start + emitters_per_prim]))
+            chunk = shuffled[frame][prim * emitters_per_prim : (prim + 1) * emitters_per_prim]
+            states.append(build_emitter_state(chunk))
 
         name = f"Livox_Mid360_{chr(ord('A') + prim)}"
         profile = build_profile(states, name, args.max_range)
