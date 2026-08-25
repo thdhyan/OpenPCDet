@@ -74,6 +74,14 @@ simulation_app = SimulationApp(
         # cudaMemcpyAsync races when several RTX LiDAR prims publish over ROS2
         # (IsaacSim discussion #685).
         "/app/sensors/nv/lidar/outputBufferOnGPU": False,
+        # Multi-tick (6.0 default) without motion BVH is unsupported - RTX
+        # LiDAR reads fail with GMO magic-number errors. Must be command-line
+        # args; config-dict keys apply too late to matter.
+        "extra_args": [
+            "--/renderer/raytracingMotion/enabled=true",
+            "--/renderer/raytracingMotion/enableHydraEngineMasking=true",
+            "--/renderer/raytracingMotion/enabledForHydraEngines=0,1,2,3",
+        ],
     }
 )
 
