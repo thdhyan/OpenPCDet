@@ -47,50 +47,54 @@ Legend: ✅ done · 🔄 in progress · ⛔ blocked · ⬜ not started
   (`g1_rtx_sim.py` remains as the bare-warehouse-free alternative scene per
   its own docstring).
 
-## Open — RTX LiDAR coverage ⛔
+## RTX LiDAR coverage — three root causes found and fixed ✅ (2026-08-13)
 
-Published cloud is a **partial band, not a full 360° ring**: azimuth
-clustered ~50°–180°, elevation ~0°–40°, against real warehouse mesh geometry
-(not a missing-geometry artifact — 781 real meshes present). Each individual
-`emitterState` JSON genuinely spans the full `-180..180`/`-5.7..50` range, so
-the drop happens between the authored USD attributes and the returned
-`GenericModelOutput` hits. Leading unconfirmed hypothesis: self-occlusion
-from the mount's 180°-roll orientation. Next diagnostic step: isolate on a
-real `UsdGeom.Mesh` ground plane (not `Cube` — RTX likely doesn't ray-trace
-implicit primitives) and try the pre-fix mount orientation (2.3° pitch, no
-roll) to test the self-occlusion theory directly. → `docs/RTX_LIDAR_INIT.md`.
+**Root causes (all three present simultaneously):**
 
-**New measurement, 2026-08-11 (simple-room scene, `--no-ira`, upright
-balancing robot, RViz added — see below):** measured directly off the live
-topics with a one-shot `rclpy` subscriber (`x,y,z` → range/elevation/azimuth
-per point), not just eyeballed in RViz:
+1. **`elementsCoordsType=SPHERICAL` (GMO default)** — `gmo.x/y/z` are
+   azimuth(deg)/elevation(deg)/range(m), not Cartesian x/y/z. Publisher
+   stacked them as `[x, y, z]` metres, so elevation values in degrees (+11°…
+   +87°) were placed at those metre offsets — producing the "upper-hemisphere
+   band" symptom. Fixed: `spawn_mid360` now sets
+   `omni:sensor:Core:elementsCoordsType="CARTESIAN"` on every prim; publisher
+   has runtime check + SPHERICAL→Cartesian fallback.
 
-| Topic (prim) | points/window | elevation range | azimuth range |
-|---|---|---|---|
-| `/livox/mid360/points/a` | **0** | — | — |
-| `/livox/mid360/points/b` | 1062 | **+11.2° … +87.9°** | −180° … +180° |
-| `/livox/mid360/points/c` | 1029 | **+11.1° … +87.4°** | −180° … +180° |
-| `/livox/mid360/points/d` | **0** | — | — |
+2. **Elevation-biased chunk split in `gen_mid360_rtx_config.py`** — the
+   `mid360.npy` pattern is stored sorted by elevation within each frame.
+   Contiguous spatial chunks (prim 0 = points 0–4999, etc.) therefore landed
+   on elevation sub-bands: prims A & D got `el=[+17°…+52°]` only (upper
+   hemisphere → nothing but ceiling → 0 hits), while B & C got
+   `el=[-7°…+22°]`. Fixed: per-frame shuffle with `rng.shuffle` before
+   chunking; all 4 prims now cover `el=[-7°…+52°]` with ~15% negative
+   (ground) rays. Configs regenerated (25 states, 4.73 MB each, under 5 MB
+   Hydra limit).
 
-Two distinct problems, not one: (1) prims A and D return **zero points**
-every window in this scene/pose — matches the `raw_points=0` lines already
-in `[WH] lidar per-prim diagnostics` output, so this isn't new, just now
-confirmed at the ROS2-message level too. (2) Prims B and C, which do return
-points, are **entirely upper-hemisphere** — elevation never goes below
-+11°, so there are **no ground returns, no near-field returns, nothing at
-or below sensor height** in either working prim. That's a stronger symptom
-than the previously-logged "~0°–40°" band and is visually obvious in RViz:
-two disconnected vertical streaks (ceiling/upper-wall hits), no floor plane,
-matching the reporter's "point clouds are not alright." Azimuth itself is
-fine here (full −180…180 on both working prims) — the defect is purely in
-elevation, consistent with the self-occlusion hypothesis above (something
-below the mount, physically or in sign convention, is blocking/discarding
-every downward-pointing ray) but not yet isolated to a single cause.
-**Not yet root-caused** — next step is still the flat-`Mesh`-ground
-isolation test above, now with a concrete elevation-sign regression to
-check for first (compare `gen_mid360_rtx_config.py`'s per-prim elevation
-sign convention against the identity-mount fix from HANDOFF.md, since that
-fix changed which transform the emitter's elevation angle composes with).
+3. **Missing 180° roll on spawned sensor prims** — `mid360_link` in the USD
+   carries the URDF's `rpy=(3.14, 0, 0)` (180° roll), making the link's
+   local +z point world-down. The OmniLidar child prims were spawned with
+   identity orientation, so the emitter elevation angles were authored in a
+   frame whose +z=world-down — rays at positive elevation went up in sensor
+   frame = down in world = into the floor below blind-radius. Fixed:
+   `spawn_mid360` called with `orientation=MID360_QUAT_WXYZ` (180° roll) so
+   the prim's frame matches the physical mounting convention.
+
+**Prim validation test**: `scripts/test_lidar_prim.py` — all 4 prims PASS
+(uv venv, headless, confirmed 2026-08-13):
+- `elementsCoordsType = CARTESIAN` ✅
+- `accumulateOutputs = True` ✅
+- `tickRate = scanRateBaseHz = 10.0` ✅
+- s000 elevation = `[-7.2°, +52.2°]` on all prims ✅
+- orientation = 180° roll (w≈0, x≈1) ✅
+
+**Standalone visualizer**: `scripts/lidar_viz_isaacsim.py` — flat Mesh ground
++ sensor at configurable height, draws points in viewport with elevation
+colour, prints per-prim diagnostics. Run this first to confirm sensor sees
+geometry before introducing the robot/ROS2 stack.
+
+**Not yet re-run on real warehouse**: fixes applied and prim attrs verified.
+Next: run `python scripts/lidar_viz_isaacsim.py` (flat ground, no robot) to
+confirm hits, then re-run full `g1_warehouse_sim.py` and check the published
+topics.
 
 ## Locomotion — untested edges
 
@@ -138,6 +142,24 @@ fix changed which transform the emitter's elevation angle composes with).
 Ultra-Fusion runs correctly via Docker on this machine but has no sensor
 profile for our legged/wheel-less robot and no real Mid-360/D435 extrinsics
 calibrated yet. See Plan.md for alternatives (FAST-LIO2, FAST-LIVO2, etc.).
+
+## Foxglove Visualization (ACTIVE ISSUE)
+
+- ⛔ **Foxglove web not visualizing data** — Bridge runs on spark2 port 8765,
+  topics registered, no errors in log, port accessible from laptop (HTTP 426),
+  but Foxglove web (`app.foxglove.dev`) shows nothing when connected to
+  `ws://10.131.171.77:8765`. Previous error: "Failed to parse channel schema"
+  + "Cannot read properties of undefined (reading 'type')".
+- 🔄 **Attempted fixes:**
+  1. ROS2 message type names + simple JSON schemas → schema parse errors
+  2. Protobuf encoding with foxglove.FrameTransforms/PointCloud → "no such type"
+  3. Complete JSON schemas + foxglove-native schema names → bridge OK, Foxglove empty
+- ⬜ **Next attempts:**
+  1. Try `rosbridge_server` (ros-jazzy-rosbridge-suite) inside Docker container
+  2. Try `foxglove-sdk` Python package (replacement for deprecated foxglove-websocket)
+  3. Try desktop Foxglove app instead of web
+  4. Capture Foxglove browser console logs for exact error details
+  5. Try omitting `schemaEncoding` parameter entirely
 
 ## Infra notes
 

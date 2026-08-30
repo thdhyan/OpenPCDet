@@ -76,7 +76,7 @@ class RgbdPointCloudPublisher:
 
         self.node = Node("g1_rgbd_publisher")
         qos = QoSProfile(
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            reliability=QoSReliabilityPolicy.RELIABLE,
             history=QoSHistoryPolicy.KEEP_LAST,
             depth=1,
         )

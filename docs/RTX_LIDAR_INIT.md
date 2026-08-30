@@ -14,16 +14,21 @@ References: Isaac Sim 6.0.1 RTX LiDAR docs
 
 ## The five steps
 
-### 1. Launch with LiDAR buffering on the CPU
+### 1. Launch with LiDAR buffering on the CPU and motion BVH enabled
 
 ```python
 SimulationApp({
     "headless": ...,
-    # Several co-located RTX LiDAR prims publishing over ROS2 hit a CUDA buffer
-    # race (discussion #685: the GPU is still writing the return buffer while we
-    # read it, producing "GMO magic number is not correct" garbage). Forcing
-    # CPU-side buffering avoids it.
+    # CPU-side LiDAR return buffer — avoids CUDA race (discussion #685:
+    # GPU still writing while we read → "GMO magic number is not correct").
     "/app/sensors/nv/lidar/outputBufferOnGPU": False,
+    # Motion BVH required for RTX LiDAR to fire. Without it Isaac Sim logs
+    # "Multi-tick is enabled but motion BVH is not active" and returns 0 points.
+    # SimulationApp translates this key to:
+    #   --/renderer/raytracingMotion/enabled=true
+    #   --/renderer/raytracingMotion/enableHydraEngineMasking=true
+    # Must be set at launch — carb.settings after startup has no effect.
+    "enable_motion_bvh": True,
 })
 ```
 
@@ -147,9 +152,11 @@ any dependency on the external OmniPerception checkout.
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| Points form a thin +elevation band, no floor returns | `elementsCoordsType=SPHERICAL` (default) — `gmo.x/y/z` are az(deg)/el(deg)/range(m), not Cartesian; degree values ≈ small positive metres → upper-hemisphere artifact | `spawn_mid360` sets `omni:sensor:Core:elementsCoordsType="CARTESIAN"`; publisher has SPHERICAL→Cartesian fallback |
 | Points below ground | frame_id ≠ sensor prim (double roll) | mount **as** `mid360_link`, identity transform |
 | Empty `"data"` array | raw annotator attach | use `LidarSensor` runtime wrapper |
 | Topic advertised, silent | OG `ROS2RtxLidarHelper` on this build | publish via rclpy (`RtxLidarPublisher`) |
 | `bankId 0 > numLines 0` | `numLines`/`numRaysPerLine` unset | author them in `spawn_mid360` |
+| 0 points, "motion BVH not active" warning | `enable_motion_bvh` not set at launch | add `"enable_motion_bvh": True` to `SimulationApp({...})` — must be at launch, carb.settings post-startup ignored |
 | Points at 95–165 m vs `farRangeM=40` | CUDA buffer race (#685) | `outputBufferOnGPU=False` + `max_range_m` filter |
 | Sensor fires 6× too fast | Isaac Sim 5.1 ignores `tickRate` | use Isaac Sim 6.0+ |

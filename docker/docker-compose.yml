@@ -1,0 +1,54 @@
+# G1 Isaac Sim + ROS2 + Zenoh Bridge
+# Portable across DL (4×RTX 6000), Spark (GB10), and other NVIDIA GPU servers.
+#
+# Usage:
+#   cd /home/thakk100/Projects/thesis-sim
+#   docker compose up -d
+#   docker logs -f isaac-sim-ros   # watch sim startup
+#   docker logs -f zenoh-bridge    # watch bridge routes
+#
+# On the laptop/client:
+#   ~/bin/zenoh-bridge-ros2dds -e tcp/<SPARK_IP>:7447 -n /sim_bridge --rest-http-port 8001
+
+services:
+  isaac-sim:
+    image: nvcr.io/nvidia/isaac-lab:3.0.0-beta2-post1
+    container_name: isaac-sim-ros
+    network_mode: host
+    ipc: host
+    privileged: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ./:/workspace/thesis-sim
+    entrypoint:
+      - /bin/bash
+      - /workspace/thesis-sim/G1_sim/docker/entrypoint.sh
+    environment:
+      - ACCEPT_EULA=Y
+      - PRIVACY_CONSENT=Y
+      - ROS_DOMAIN_ID=0
+      - ROS_DISTRO=jazzy
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - LD_LIBRARY_PATH=/isaac-sim/exts/isaacsim.ros2.core/jazzy/lib
+      - PYTHONPATH=/isaac-sim/exts/isaacsim.ros2.core/jazzy/rclpy
+      - ISAAC_SIM_ROOT=/isaac-sim
+
+  zenoh-bridge:
+    image: eclipse/zenoh-bridge-ros2dds:latest
+    container_name: zenoh-bridge
+    network_mode: service:isaac-sim
+    depends_on:
+      - isaac-sim
+    restart: on-failure
+    environment:
+      - ROS_DOMAIN_ID=0
+    command: >
+      --domain 0
+      --namespace /sim_bridge
+      --rest-http-port 8000

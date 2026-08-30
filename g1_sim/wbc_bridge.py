@@ -24,7 +24,10 @@ import collections
 from pathlib import Path
 
 import numpy as np
-import onnxruntime as ort
+
+# Lazy import — onnxruntime only needed when WbcBridge is instantiated,
+# not when importing joint-name constants for external WBC mode.
+ort = None
 
 # Canonical decoupled_wbc / Unitree 29-DOF joint order - see
 # decoupled_wbc/sim2mujoco/resources/robots/g1/g1_gear_wbc.xml (defines qpos
@@ -130,6 +133,9 @@ class WbcBridge:
     """
 
     def __init__(self, balance_onnx: str | Path, walk_onnx: str | Path):
+        global ort
+        import onnxruntime as _ort
+        ort = _ort
         self._balance = self._load(str(balance_onnx))
         self._walk = self._load(str(walk_onnx))
         self.reset()

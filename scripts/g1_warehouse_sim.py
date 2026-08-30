@@ -423,8 +423,7 @@ def main() -> None:
         # mid360_link origin while the published frame_id stays mid360_link -
         # negligible for detection; update the URDF mid360_joint if exact
         # frame-origin parity ever matters.
-        translation=(0.0, 0.0, 0.05),
-        # mid360_link is already 180° rolled (URDF rpy="3.14 0 0") relative to
+        translation=(0.0, 0.0, -0.05),  # -5cm: flipped lidar (identity orient) → local +z = world-UP, so negative moves UP
         # torso_link, so the link frame has +z pointing world-down (dome faces
         # scene). The OmniLidar child prims must carry the same 180° roll so
         # their emitter elevation angles are authored in a frame that matches
@@ -434,10 +433,18 @@ def main() -> None:
         # MID360_QUAT_WXYZ = (cos(π/2), sin(π/2), 0, 0) = 180° roll about X.
         orientation=MID360_QUAT_WXYZ,
     )
+    # Debug: print actual world position of the first sensor prim
+    if prim_paths:
+        from pxr import UsdGeom as _UsdGeom
+        _stage = omni.usd.get_context().get_stage()
+        _sp = _stage.GetPrimAtPath(prim_paths[0])
+        if _sp.IsValid():
+            _xf = _UsdGeom.Xformable(_sp)
+            _wm = _xf.ComputeLocalToWorldTransform(0.0)
+            _wp = _wm.ExtractTranslation()
+            print(f"[WH] sensor world pos: ({_wp[0]:.4f}, {_wp[1]:.4f}, {_wp[2]:.4f})")
     if args_cli.num_prims and args_cli.num_prims < len(prim_paths):
         prim_paths = prim_paths[: args_cli.num_prims]
-    print(f"[WH] lidar prims     : {len(prim_paths)}")
-
     print(f"[WH] lidar prims     : {len(prim_paths)}")
 
 

@@ -22,10 +22,15 @@ Semantic segmentation only labels prims carrying semantics; see
 
 from __future__ import annotations
 
-# Mirrors g1_29dof.urdf: d435_link is a fixed child of torso_link, pitched
-# ~47.6 deg down so the camera covers the near ground the LiDAR cannot see.
-D435_POS = (0.0576235, 0.01753, 0.41987)
-D435_PITCH_RAD = 0.8307767239493009
+# URDF reference position (mirrors g1_29dof.urdf d435_link child of torso_link).
+# The URDF values place the camera INSIDE the robot mesh in Isaac Sim because
+# the torso/head USD geometry extends further than the URDF collision spheres.
+# We offset forward (+X) and upward (+Z) in the torso frame to clear the mesh:
+#   +X = forward (away from robot body)
+#   +Z = up in torso frame (camera sits higher on the head)
+# The pitch angle is preserved so the boresight still points ~47.6° downward.
+D435_POS = (0.1576235, 0.01753, 0.51987)  # URDF (0.058, 0.018, 0.420) + (0.10, 0.0, 0.10) clearance
+D435_PITCH_RAD = 0.8307767239493009  # ~47.6° downward tilt — unchanged
 
 TOPIC_RGB = "/g1/camera/rgb"
 TOPIC_DEPTH = "/g1/camera/depth"

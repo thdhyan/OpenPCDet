@@ -103,7 +103,7 @@ class RtxLidarPublisher:
         # Best-effort matches how sensor streams are normally consumed: a
         # subscriber that falls behind should drop scans, not queue them.
         qos = QoSProfile(
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            reliability=QoSReliabilityPolicy.RELIABLE,
             history=QoSHistoryPolicy.KEEP_LAST,
             depth=1,
         )
