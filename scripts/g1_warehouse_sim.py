@@ -38,6 +38,14 @@ sys.path.insert(0, str(REPO))
 
 parser = argparse.ArgumentParser(description="G1 in a populated warehouse.")
 parser.add_argument("--headless", action="store_true")
+parser.add_argument(
+    "--xr",
+    action="store_true",
+    help="Launch with isaacsim.exp.base.xr.vr kit (OpenXR/CloudXR mode). "
+    "Requires 'python -m isaacteleop.cloudxr' running first as the system "
+    "OpenXR compositor, and NVIDIA CloudXR client on Quest 3. "
+    "Renders the scene into the VR headset; implies not headless.",
+)
 parser.add_argument("--steps", type=int, default=0, help="Stop after N steps; 0 runs forever.")
 parser.add_argument("--no-ros2", action="store_true")
 parser.add_argument("--no-camera", action="store_true", help="Skip the D435 camera (saves render time).")
@@ -99,7 +107,16 @@ parser.add_argument(
 )
 args_cli = parser.parse_args()
 
+# --xr implies rendering into the VR headset (not headless)
+if args_cli.xr and args_cli.headless:
+    print("[WH] WARNING: --xr and --headless are mutually exclusive; ignoring --headless")
+    args_cli.headless = False
+
 SIM_RATE_HZ = 60.0
+
+# XR mode: use the OpenXR/CloudXR experience kit so IsaacSim renders into
+# the VR compositor (CloudXR runtime from `python -m isaacteleop.cloudxr`).
+_experience = "isaacsim.exp.base.xr.vr" if args_cli.xr else "isaacsim.exp.full"
 
 simulation_app = SimulationApp(
     {
@@ -126,7 +143,8 @@ simulation_app = SimulationApp(
             "--/renderer/raytracingMotion/enabledForHydraEngines=0,1,2,3",
             "--/app/sensors/nv/lidar/outputBufferOnGPU=false",
         ],
-    }
+    },
+    experience=_experience,
 )
 
 # Verify the sensor-critical settings ACTUALLY took effect (they are read at
