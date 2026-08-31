@@ -116,7 +116,16 @@ SIM_RATE_HZ = 60.0
 
 # XR mode: use the OpenXR/CloudXR experience kit so IsaacSim renders into
 # the VR compositor (CloudXR runtime from `python -m isaacteleop.cloudxr`).
-_experience = "isaacsim.exp.base.xr.vr" if args_cli.xr else "isaacsim.exp.full"
+# Pass the full path — SimulationApp fails to resolve the short name on some builds.
+import os as _os, site as _site
+_XR_KIT = _os.path.join(
+    _os.path.dirname(_site.getsitepackages()[0]),  # .venv-isaac/lib/python3.12
+    "site-packages/isaacsim/apps/isaacsim.exp.base.xr.vr.kit",
+)
+if args_cli.xr and not _os.path.exists(_XR_KIT):
+    # fallback: try the short name (works on some IsaacSim builds)
+    _XR_KIT = "isaacsim.exp.base.xr.vr"
+_experience = _XR_KIT if args_cli.xr else "isaacsim.exp.full"
 
 simulation_app = SimulationApp(
     {
