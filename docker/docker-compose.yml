@@ -12,7 +12,9 @@
 
 services:
   isaac-sim:
-    image: nvcr.io/nvidia/isaac-lab:3.0.0-beta2-post1
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: isaac-sim-ros
     network_mode: host
     ipc: host
@@ -25,7 +27,7 @@ services:
               count: all
               capabilities: [gpu]
     volumes:
-      - ./:/workspace/thesis-sim
+      - ../:/workspace/thesis-sim
     entrypoint:
       - /bin/bash
       - /workspace/thesis-sim/G1_sim/docker/entrypoint.sh

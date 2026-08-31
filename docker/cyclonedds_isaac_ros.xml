@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain>
+    <General>
+      <NetworkInterfaceAddress>loopback</NetworkInterfaceAddress>
+      <AllowMulticast>false</AllowMulticast>
+      <MaxParticipants>128</MaxParticipants>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+    </Discovery>
+    <Transport>
+      <SharedMemory>
+        <Enable>true</Enable>
+        <LogLevel>info</LogLevel>
+      </SharedMemory>
+    </Transport>
+  </Domain>
+</CycloneDDS>

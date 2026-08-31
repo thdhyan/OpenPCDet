@@ -1,7 +1,7 @@
 #!/bin/bash
-# Entrypoint for the Isaac Sim + ROS2 container.
+# Entrypoint for the Isaac Sim + ROS2 + Isaac ROS container.
 # Installs onnxruntime-gpu and starts the sim.
-# Isaac ROS (CUVSLAM + NVBLOX) is installed separately — see docker/README.md.
+# Isaac ROS (CUVSLAM + NVBLOX) is baked into the Docker image.
 #
 # Portable across DL, Spark, and other NVIDIA GPU servers.
 
@@ -11,6 +11,14 @@ export ROS_DOMAIN_ID=0
 export ISAAC_SIM_ROOT=/isaac-sim
 export LD_LIBRARY_PATH=/isaac-sim/exts/isaacsim.ros2.core/jazzy/lib:$LD_LIBRARY_PATH
 export PYTHONPATH=/isaac-sim/exts/isaacsim.ros2.core/jazzy/rclpy:$PYTHONPATH
+
+# CycloneDDS config (set here, not in docker-compose env, to avoid rclpy crash)
+export CYCLONEDDS_URI=file:///root/.config/cyclonedds/cyclonedds.xml
+
+# Isaac ROS environment
+if [ -f /opt/ros/jazzy/setup.bash ]; then
+    source /opt/ros/jazzy/setup.bash
+fi
 
 echo "=== [entrypoint] GPU check ==="
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo "WARNING: nvidia-smi not available"
