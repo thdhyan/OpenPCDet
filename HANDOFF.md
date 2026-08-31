@@ -1,6 +1,49 @@
 # HANDOFF — G1 Isaac Sim + ROS2 Zenoh Bridge Stack
-**Last updated:** 2026-08-30 end-of-session
+**Last updated:** 2026-08-31 (Isaac ROS install session)
 **Branch:** `isaacsim6-rtx-emitter` (pushed to GitHub)
+
+---
+
+## 🆕 Isaac ROS (CUVSLAM + NVBLOX) — Installed 2026-08-31
+
+### What was done
+- Created `docker/Dockerfile` extending `nvcr.io/nvidia/isaac-lab:3.0.0-beta2-post1`
+- Isaac ROS release-4.6 packages installed from NVIDIA apt repo (`noble-fastos` for DGX Spark ARM64)
+- CUVSLAM: `ros-jazzy-isaac-ros-visual-slam` — visual SLAM node
+- NVBLOX: `ros-jazzy-isaac-ros-nvblox` — 3D scene reconstruction + Nav2 costmap
+- Supporting packages: nav2, tf2, pcl, rviz2, robot-state-publisher
+
+### Key technical decisions
+1. **Dummy CUDA metapackages**: Created empty `cuda-toolkit-13-0`, `tensorrt`, etc. packages via `equivs` to satisfy Isaac ROS apt dependencies without installing conflicting CUDA libraries from the NVIDIA CUDA repo
+2. **Do NOT install `ros-jazzy-ros-base`**: Installing it from apt causes a TSC crash on DGX Spark (ARM64). The base image already has Isaac Sim's bundled ROS 2 Jazzy
+3. **ROS 2 apt repo**: Added for PCL packages (`ros-jazzy-pcl-conversions`, `ros-jazzy-pcl-ros`)
+4. **Isaac Sim's bundled ROS**: Entrypoint uses `/isaac-sim/exts/isaacsim.ros2.core/jazzy/` not `/opt/ros/jazzy/`
+
+### Isaac ROS packages available
+| Package | Purpose |
+|---------|---------|
+| `isaac_ros_visual_slam` | CUVSLAM visual SLAM node |
+| `isaac_ros_visual_slam_interfaces` | CUVSLAM message types |
+| `isaac_ros_nvblox` | NVBLOX 3D reconstruction |
+| `nvblox_ros`, `nvblox_msgs` | NVBLOX ROS integration |
+| `nvblox_nav2` | NVBLOX Nav2 costmap plugin |
+| `ros-jazzy-nav2-costmap-2d` | Nav2 costmap |
+| `ros-jazzy-robot-state-publisher` | URDF→TF publisher |
+| `ros-jazzy-tf2-ros` | TF2 transform library |
+| `ros-jazzy-pcl-conversions` | PCL↔ROS conversions |
+
+### Usage
+```bash
+# Build the custom image
+cd /home/thakk100/Projects/thesis-sim
+docker compose build
+
+# Run
+docker compose up -d
+
+# Inside container, Isaac ROS packages are available:
+ros2 pkg list | grep isaac_ros
+```
 
 ---
 
