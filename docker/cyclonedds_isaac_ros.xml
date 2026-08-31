@@ -4,16 +4,9 @@
     <General>
       <NetworkInterfaceAddress>loopback</NetworkInterfaceAddress>
       <AllowMulticast>false</AllowMulticast>
-      <MaxParticipants>128</MaxParticipants>
     </General>
     <Discovery>
       <ParticipantIndex>auto</ParticipantIndex>
     </Discovery>
-    <Transport>
-      <SharedMemory>
-        <Enable>true</Enable>
-        <LogLevel>info</LogLevel>
-      </SharedMemory>
-    </Transport>
   </Domain>
 </CycloneDDS>

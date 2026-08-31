@@ -1,6 +1,98 @@
 # HANDOFF — G1 Isaac Sim + ROS2 Zenoh Bridge Stack
-**Last updated:** 2026-08-31 (Isaac ROS install session)
+**Last updated:** 2026-08-31 (CUVSLAM + NVBLOX integration verified)
 **Branch:** `isaacsim6-rtx-emitter` (pushed to GitHub)
+
+---
+
+## 🆕 CUVSLAM + NVBLOX Perception Stack — Verified 2026-08-31
+
+### What was done
+- Created `launch/perception_launch.py` — single launch file wiring CUVSLAM + NVBLOX to sim sensors
+- Created `launch/depth_converter.py` — converts 32FC1 depth (metres) → uint16 (mm) for CUVSLAM RGBD mode
+- Created `scripts/launch_perception.sh` — convenience script to launch from inside container
+- Fixed Dockerfile: installs real `libnpp-13-0` from NVIDIA CUDA repo (Isaac ROS NVBLOX needs CUDA 13 NPP)
+- Fixed entrypoint: sets `AMENT_PREFIX_PATH`, CUDA 13 library paths
+- Fixed CycloneDDS config: interface `lo` (not `loopback`), removed deprecated `MaxParticipants`/`Transport` elements
+
+### Architecture
+```
+Isaac Sim container (spark2)
+├── g1_warehouse_sim.py (WBC + sensors)
+├── depth_format_converter.py (32FC1 m → uint16 mm)
+├── perception_launch.py
+│   ├── static_transform_publisher (World → map)
+│   ├── visual_slam_node (CUVSLAM, RGBD mode, tracking_mode=2)
+│   └── nvblox_node (3D reconstruction, static TSDF)
+└── zenoh-bridge-ros2dds (sidecar, forwards all topics)
+
+Laptop
+├── zenoh-bridge-ros2dds (receives all topics)
+├── robot_state_publisher (URDF → TF)
+└── RViz2 (visualization)
+```
+
+### Sim sensor topics consumed
+| Topic | Type | Encoding | Notes |
+|-------|------|----------|-------|
+| `/g1/camera/rgb` | Image | rgb8 | 480×640, d435_color_optical_frame |
+| `/g1/camera/depth` | Image | 32FC1 | 480×640, metres, RELIABLE QoS |
+| `/g1/camera/camera_info` | CameraInfo | plumb_bob | fx=fy=460.55, cx=320, cy=240 |
+| `/g1/imu` | Imu | — | pelvis frame |
+| `/livox/mid360/points/a` | PointCloud2 | — | ~30k pts, RELIABLE QoS |
+| `/tf` | TFMessage | — | World → pelvis → robot chain |
+| `/g1/joint_states` | JointState | — | All joints |
+
+### CUVSLAM configuration (RGBD mode)
+- **tracking_mode**: 2 (RGBD) — uses `image_0` (RGB) + `depth_0` (uint16 mm)
+- **depth_scale_factor**: 1000.0 (divides uint16 mm by 1000 to get metres)
+- **base_frame**: pelvis
+- **map_frame**: map, **odom_frame**: odom
+- **camera_optical_frames**: `["d435_color_optical_frame"]`
+- **IMU**: disabled (D435 has no IMU; noise params are nominal)
+
+### NVBLOX configuration
+- **voxel_size**: 0.05 m
+- **mapping_type**: static_tsdf
+- **global_frame**: odom
+- **input_qos**: DEFAULT (works with Isaac Sim's RELIABLE publisher)
+- **map_clearing_frame_id**: pelvis
+- **workspace**: ±15 m, height -0.5 to 3.0 m
+
+### CUDA 13 compatibility (CRITICAL)
+Isaac Sim 4.5 ships CUDA 12.8, but Isaac ROS release-4.6 needs CUDA 13 libraries:
+- **libnppidei.so.13, libnppim.so.13, libnppitc.so.13, libnppc.so.13**: Installed via `libnpp-13-0` from NVIDIA CUDA apt repo
+- **libcudart.so.13**: Installed as dependency of `libnpp-13-0`
+- **libnvJitLink.so.13**: From Isaac Sim's cu13 Python package at `/isaac-sim/kit/python/lib/python3.12/site-packages/nvidia/cu13/lib/`
+- **ldconfig**: `/etc/ld.so.conf.d/cuda13-cu13.conf` points to cu13 Python package lib dir
+
+### Known issues
+1. **`ros2 topic echo` doesn't work**: Python type support mismatch between apt-installed ROS2 (Python 3.12) and Isaac Sim's bundled ROS2 (Python 3.11). C++ nodes work fine; CLI tools have import errors.
+2. **Frame rate warnings**: CUVSLAM expects 30 FPS but sim publishes ~20 FPS. Warnings are cosmetic.
+3. **NVBLOX initial TF lookup**: First map clearing fails because CUVSLAM hasn't published TF yet. Recovers after ~1 second.
+4. **Isaac Sim transient crash**: `bad_variant_access` in `omni.anim.behavior.core` — random, retry works.
+
+### To launch the perception stack
+```bash
+# Inside container (after sim is running):
+export PATH=/opt/ros/jazzy/bin:/usr/local/cuda-13.0/bin:$PATH
+export AMENT_PREFIX_PATH=/opt/ros/jazzy
+export CYCLONEDDS_URI=file:///root/.config/cyclonedds/cyclonedds.xml
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export ROS_DOMAIN_ID=0
+export PYTHONPATH=/opt/ros/jazzy/lib/python3.12/site-packages:$PYTHONPATH
+export LD_LIBRARY_PATH=/opt/ros/jazzy/lib:/usr/local/cuda-13.0/lib64:/isaac-sim/kit/python/lib/python3.12/site-packages/nvidia/cu13/lib:$LD_LIBRARY_PATH
+ros2 launch /workspace/thesis-sim/G1_sim/launch/perception_launch.py
+```
+
+### Output topics (available via zenoh to laptop)
+| Topic | Type | Source |
+|-------|------|--------|
+| `/visual_slam/tracking/odometry` | Odometry | CUVSLAM |
+| `/visual_slam/tracking/slam_path` | Path | CUVSLAM |
+| `/tf` (map→odom→pelvis) | TFMessage | CUVSLAM |
+| `/nvblox_node/mesh` | MarkerArray | NVBLOX |
+| `/nvblox_node/static_map_slice` | OccupancyGrid | NVBLOX |
+| `/nvblox_node/esdf_slice_bounds` | MarkerArray | NVBLOX |
 
 ---
 

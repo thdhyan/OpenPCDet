@@ -1,8 +1,9 @@
 # Custom Isaac Sim + Isaac ROS image (CUVSLAM + NVBLOX)
 # Extends nvcr.io/nvidia/isaac-lab:3.0.0-beta2-post1
 #
-# Uses dummy metapackages for CUDA deps and installs Isaac ROS from apt
-# WITHOUT ros-jazzy-ros-base (which conflicts with Isaac Sim's bundled ROS).
+# Isaac Sim ships CUDA 12.8, but Isaac ROS release-4.6 needs CUDA 13 NPP.
+# We install the real libnpp-13-0 from NVIDIA's CUDA repo and let the
+# cu13 Python package provide libnvJitLink.so.13.
 #
 # Build:
 #   docker compose build
@@ -27,31 +28,19 @@ RUN apt-get update && apt-get install -y curl gnupg && \
     apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
-# ── 1. Dummy CUDA/TensorRT packages ─────────────────────────────────────────
-RUN apt-get update && apt-get install -y equivs gnupg && \
-    mkdir -p /tmp/dummy && cd /tmp/dummy && \
-    for pkg in \
-      "cuda-toolkit-13-0 13.0.0-1 all" \
-      "cuda-toolkit-13-0-1 13.0.0-1 all" \
-      "cuda-cudart-dev-13-0 13.0.0-1 all" \
-      "libcudnn9-cuda-13 9.0.0-1 all" \
-      "tensorrt 10.0.0-1 all" \
-      "triton-server 2.0.0-1 all" \
-    ; do \
-      name=$(echo "$pkg" | cut -d' ' -f1); \
-      ver=$(echo "$pkg" | cut -d' ' -f2); \
-      arch=$(echo "$pkg" | cut -d' ' -f3); \
-      printf "Package: %s\nVersion: %s\nArchitecture: %s\nDescription: Dummy for Isaac ROS compat\n" "$name" "$ver" "$arch" > "${name}.cfg" && \
-      equivs-build "${name}.cfg"; \
-    done && \
-    dpkg -i *.deb && \
-    cd / && rm -rf /tmp/dummy && \
-    apt-get purge -y equivs && \
-    apt-get autoremove -y 2>/dev/null || true && \
+# ── 1. Add NVIDIA CUDA repo + install CUDA 13 NPP runtime ────────────────────
+# Isaac ROS NVBLOX needs libnppidei.so.13, libnppim.so.13, libnppitc.so.13,
+# libnppc.so.13. These are only in the real CUDA 13 NPP package.
+# We also install cuda-cudart-13-0 (pulled as dep) which provides libcudart.so.13.
+RUN curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/cuda-keyring_1.1-1_all.deb \
+      -o /tmp/cuda-keyring.deb && \
+    dpkg -i /tmp/cuda-keyring.deb && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends libnpp-13-0 && \
+    rm -f /tmp/cuda-keyring.deb && \
     rm -rf /var/lib/apt/lists/*
 
 # ── 2. Add Isaac ROS apt repo ────────────────────────────────────────────────
-# Download key, dearmor into keyring, and add repo
 RUN mkdir -p /usr/share/keyrings /etc/apt/keyrings && \
     curl -fsSL https://isaac.download.nvidia.com/isaac-ros/repos.key -o /tmp/isaac-ros.key && \
     gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-isaac-ros.gpg /tmp/isaac-ros.key && \
@@ -62,7 +51,7 @@ RUN mkdir -p /usr/share/keyrings /etc/apt/keyrings && \
       > /etc/apt/sources.list.d/nvidia-isaac-ros.list && \
     apt-get update
 
-# ── 3. Install ONLY the Isaac ROS packages we need (no ros-jazzy-ros-base) ───
+# ── 3. Install Isaac ROS packages (no ros-jazzy-ros-base) ────────────────────
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       ros-jazzy-isaac-ros-visual-slam \
@@ -75,10 +64,16 @@ RUN apt-get update && \
       ros-jazzy-pcl-ros \
     && rm -rf /var/lib/apt/lists/*
 
-# ── 4. CycloneDDS config ─────────────────────────────────────────────────────
-COPY docker/cyclonedds_isaac_ros.xml /root/.config/cyclonedds/cyclonedds.xml
+# ── 4. ldconfig for CUDA 13 libs in non-standard paths ───────────────────────
+# cu13 Python package has libnvJitLink.so.13 (needed by CUVSLAM)
+RUN echo "/isaac-sim/kit/python/lib/python3.12/site-packages/nvidia/cu13/lib" \
+      > /etc/ld.so.conf.d/cuda13-cu13.conf && \
+    ldconfig
 
-# ── 5. Environment setup ─────────────────────────────────────────────────────
+# ── 5. CycloneDDS config ─────────────────────────────────────────────────────
+# CycloneDDS config is handled by entrypoint.sh (copies from volume mount at runtime)
+
+# ── 6. Environment setup ─────────────────────────────────────────────────────
 RUN echo "" >> /root/.bashrc && \
     echo "# Isaac Sim ROS2 core" >> /root/.bashrc && \
     echo "export LD_LIBRARY_PATH=/isaac-sim/exts/isaacsim.ros2.core/jazzy/lib:\$LD_LIBRARY_PATH" >> /root/.bashrc && \

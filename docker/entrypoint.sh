@@ -16,12 +16,22 @@ if [ -d /workspace/thesis-sim/G1_sim/g1_sim ]; then
     export PYTHONPATH=/workspace/thesis-sim/G1_sim:$PYTHONPATH
 fi
 
-# CycloneDDS config (set here, not in docker-compose env, to avoid rclpy crash)
+# CycloneDDS config — prefer the volume-mounted copy (allows updates without rebuild)
+mkdir -p /root/.config/cyclonedds
+if [ -f /workspace/thesis-sim/docker/cyclonedds_isaac_ros.xml ]; then
+    cp /workspace/thesis-sim/docker/cyclonedds_isaac_ros.xml /root/.config/cyclonedds/cyclonedds.xml
+fi
 export CYCLONEDDS_URI=file:///root/.config/cyclonedds/cyclonedds.xml
 
-# Isaac ROS environment (use Isaac Sim's bundled ROS 2)
-# NOTE: Do NOT source /opt/ros/jazzy/setup.bash — it conflicts with Isaac Sim's ROS.
-export ROS_PACKAGE_PATH=/opt/ros/isaac_ros_ws/src:$ROS_PACKAGE_PATH 2>/dev/null || true
+# CUDA 13 libraries (NPP for NVBLOX, cudart for CUVSLAM)
+export LD_LIBRARY_PATH=/usr/local/cuda-13.0/lib64:/isaac-sim/kit/python/lib/python3.12/site-packages/nvidia/cu13/lib:${LD_LIBRARY_PATH:-}
+
+# Isaac ROS environment (use Isaac Sim's bundled ROS 2 for rclcpp,
+# apt-installed /opt/ros/jazzy for Isaac ROS composable nodes)
+export AMENT_PREFIX_PATH=/opt/ros/jazzy
+export ROS_PACKAGE_PATH=/opt/ros/jazzy/share:${ROS_PACKAGE_PATH:-}
+export PYTHONPATH=/opt/ros/jazzy/lib/python3.12/site-packages:${PYTHONPATH:-}
+export PATH=/opt/ros/jazzy/bin:${PATH:-}
 
 echo "=== [entrypoint] GPU check ==="
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo "WARNING: nvidia-smi not available"
