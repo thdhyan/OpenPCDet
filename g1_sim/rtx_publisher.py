@@ -80,6 +80,10 @@ class RtxLidarPublisher:
         # the RTX sensor's buffer while the GPU is still writing it. This
         # filter discards the resulting garbage rather than fixing the race
         # itself (which is upstream, in the RTX sensor plugin).
+        # Update 2026-09-22 (user): PERSISTENT invalid-magic / 0 points means
+        # the sensor origin sits inside a mesh (self-intersecting rays); the
+        # fix is moving the lidar ~2cm to clear it (G1 mount: -0.05 -> -0.03).
+        # The #685 race above only explains 1-2 warnings at sensor spin-up.
         self.max_range_m = max_range_m
         self.publish_period = 1.0 / publish_rate
         self._last_publish = -float("inf")

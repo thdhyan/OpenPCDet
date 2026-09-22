@@ -159,4 +159,5 @@ any dependency on the external OmniPerception checkout.
 | `bankId 0 > numLines 0` | `numLines`/`numRaysPerLine` unset | author them in `spawn_mid360` |
 | 0 points, "motion BVH not active" warning | `enable_motion_bvh` not set at launch | add `"enable_motion_bvh": True` to `SimulationApp({...})` — must be at launch, carb.settings post-startup ignored |
 | Points at 95–165 m vs `farRangeM=40` | CUDA buffer race (#685) | `outputBufferOnGPU=False` + `max_range_m` filter |
+| 0 points or sporadic `Invalid magic number` / `GMO magic number is not correct` | sensor origin inside a mesh — rays self-intersect, GMO buffer never forms | move the lidar ~2 cm to clear the mesh (G1: local z `-0.05` → `-0.03`, frame flipped so local −z = world up; 2026-09-22) |
 | Sensor fires 6× too fast | Isaac Sim 5.1 ignores `tickRate` | use Isaac Sim 6.0+ |

@@ -509,16 +509,19 @@ def main() -> None:
     prim_paths = spawn_mid360(
         mount,
         config_dir=REPO / args_cli.config_dir,
-        # +5cm WORLD-Z clearance (live-swept 2026-08-25): at the stock URDF
-        # position the OmniLidar origin is buried inside the G1 head mesh -
-        # every ray self-intersects and the GMO buffer never forms (0 points
-        # + "GMO magic number" spam). Sweep results: dz=-1cm upper band only,
-        # +3cm missing bottom 6 deg, +5cm FULL -7.3..+52.3 cone at 442k
-        # pts/render, +7cm identical. NOTE: rays now originate 5cm above the
-        # mid360_link origin while the published frame_id stays mid360_link -
-        # negligible for detection; update the URDF mid360_joint if exact
-        # frame-origin parity ever matters.
-        translation=(0.0, 0.0, -0.05),  # -5cm: flipped lidar (identity orient) → local +z = world-UP, so negative moves UP
+        # +3cm WORLD-Z clearance (local -z = world-UP: mid360_link is rolled
+        # 180 deg). Origin buried in the G1 head mesh self-intersects every
+        # ray -> GMO buffer never forms (0 points + "GMO magic number" spam).
+        # 2026-08-25 sweep: dz=-1 upper band only, +3 missing bottom 6 deg,
+        # +5 FULL -7.3..+52.3 cone at 442k pts/render, +7 identical -> ran
+        # +5cm, but run7/run8 still threw "Invalid magic number" warnings, so
+        # per user 2026-09-22 drop 2cm to +3cm: GMO invalid-magic = origin
+        # inside a mesh, lowering ~2cm clears it. Trade-off: bottom ~6 deg of
+        # the cone clips head/body at +3cm. NOTE: rays originate 3cm above
+        # the mid360_link origin while the published frame_id stays
+        # mid360_link - negligible for detection; update the URDF mid360_joint
+        # if exact frame-origin parity ever matters.
+        translation=(0.0, 0.0, -0.03),  # local -z = world-UP -> +3cm world-up
         # torso_link, so the link frame has +z pointing world-down (dome faces
         # scene). The OmniLidar child prims must carry the same 180° roll so
         # their emitter elevation angles are authored in a frame that matches

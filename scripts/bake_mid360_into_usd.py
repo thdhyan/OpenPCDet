@@ -86,7 +86,7 @@ from pxr import Gf, Usd, UsdGeom  # noqa: E402
 from g1_sim.rtx_lidar import MID360_QUAT_WXYZ, spawn_mid360  # noqa: E402
 
 # Exactly the args scripts/g1_warehouse_sim.py passes in the proven run.
-SIM_TRANSLATION = (0.0, 0.0, -0.05)
+SIM_TRANSLATION = (0.0, 0.0, -0.03)  # local -z = world-UP (flipped frame) -> +3cm, 2cm lower per GMO fix 2026-09-22
 IDENTITY_QUAT_WXYZ = (1.0, 0.0, 0.0, 0.0)
 
 

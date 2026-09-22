@@ -312,6 +312,7 @@ attribute list.
 
 | Date | Bug | Fix |
 |---|---|---|
+| 2026-09-22 | Sporadic GMO `Invalid magic number` in live runs (run7/run8) | Origin inside a mesh, not (only) the #685 race: MID360 mount dropped 2 cm (local z `-0.05`→`-0.03`; flipped frame = world +5→+3 cm) in warehouse/capture/bake |
 | 2026-08-13 | LiDAR partial band (+11°…+88° only, no ground returns) | `GMO elementsCoordsType=SPHERICAL` → x/y/z are az/el/range degrees, not Cartesian. Set `omni:sensor:Core:elementsCoordsType="CARTESIAN"` in `spawn_mid360`; added spherical→Cartesian fallback in publisher |
 | 2026-08-13 | Intensity always constant 100 | `gmo.scalar` is real normalised intensity (GMO RST docs); publisher now uses it |
 | 2026-08-11 | LiDAR cloud published below floor | Mounted sensor on `mid360_link` with identity transform; removed hand-authored 180° roll that double-applied TF |

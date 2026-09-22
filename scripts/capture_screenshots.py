@@ -164,7 +164,7 @@ if not stage.GetPrimAtPath(mount).IsValid():
 prim_paths = gw.spawn_mid360(
     mount,
     config_dir=REPO / "assets/lidar_configs_rotary",
-    translation=(0.0, 0.0, -0.05),
+    translation=(0.0, 0.0, -0.03),  # matches g1_warehouse_sim (GMO fix 2026-09-22)
     orientation=gw.MID360_QUAT_WXYZ,
 )
 log(f"lidar prims: {prim_paths}")
