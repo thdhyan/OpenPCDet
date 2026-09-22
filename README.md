@@ -107,10 +107,23 @@ python scripts/g1_warehouse_sim.py --headless   # first run pulls the warehouse 
   co-running training + sim on a small card.
 - Results are plain files — pull them back over SSH
   (`rsync` `screenshots/`, `logs/`).
-- Docker/HPC: the perception container lives in `docker/` (Dockerfile,
-  compose, CycloneDDS XMLs). For Isaac Lab in containers use
-  `./docker/container.py start`, then convert the image to Apptainer and
-  submit with `sbatch` on SLURM clusters — see the
+- Docker: this repo's container lives in `docker/` (Dockerfile on
+  `nvcr.io/nvidia/isaac-lab:3.0.0-beta2-post1`, compose, CycloneDDS XMLs;
+  repo mounted at `/workspace/thesis-sim`). From the repo root:
+  ```bash
+  docker compose -f docker/docker-compose.yml build
+  docker compose -f docker/docker-compose.yml up -d   # warehouse sim + zenoh bridge
+  # one-shot pipeline (entrypoint forwards args to /isaac-sim/python.sh):
+  docker compose -f docker/docker-compose.yml run --rm isaac-sim \
+    scripts/capture_screenshots.py --dump-pcd --out screenshots/run1
+  docker compose -f docker/docker-compose.yml run --rm isaac-sim \
+    scripts/bake_mid360_into_usd.py
+  ```
+  Target machine needs NVIDIA driver + nvidia-container-toolkit + an NGC
+  login only if the base image must be pulled. For Isaac Lab's own
+  container tooling use `docker/container.py` in the IsaacLab checkout,
+  then convert the image to Apptainer and submit with `sbatch` on SLURM
+  clusters — see the
   [Docker and HPC section](https://isaac-sim.github.io/IsaacLab/v3.0.0-EA/source/setup/installation/index.html#docker-and-hpc-clusters).
 
 ---

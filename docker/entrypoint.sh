@@ -11,9 +11,9 @@ export ROS_DOMAIN_ID=0
 export ISAAC_SIM_ROOT=/isaac-sim
 export LD_LIBRARY_PATH=/isaac-sim/exts/isaacsim.ros2.core/jazzy/lib:$LD_LIBRARY_PATH
 export PYTHONPATH=/isaac-sim/exts/isaacsim.ros2.core/jazzy/rclpy:$PYTHONPATH
-# Ensure g1_sim package is importable (may be in G1_sim/g1_sim/ or parent dir)
-if [ -d /workspace/thesis-sim/G1_sim/g1_sim ]; then
-    export PYTHONPATH=/workspace/thesis-sim/G1_sim:$PYTHONPATH
+# Ensure g1_sim package is importable (repo root is mounted at /workspace/thesis-sim)
+if [ -d /workspace/thesis-sim/g1_sim ]; then
+    export PYTHONPATH=/workspace/thesis-sim:$PYTHONPATH
 fi
 
 # CycloneDDS config — prefer the volume-mounted copy (allows updates without rebuild)
@@ -39,7 +39,13 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || ec
 echo "=== [entrypoint] Installing onnxruntime-gpu ==="
 /isaac-sim/python.sh -m pip install -q onnxruntime-gpu 2>&1 | tail -3
 
-cd /workspace/thesis-sim/G1_sim
+cd /workspace/thesis-sim
+
+# One-shot pipeline command (docker compose run passes it as args), e.g.
+#   docker compose run --rm isaac-sim scripts/capture_screenshots.py --dump-pcd
+if [ $# -gt 0 ]; then
+    exec /isaac-sim/python.sh "$@"
+fi
 
 # Find g1_warehouse_sim.py — may be in G1_sim/ or G1_sim/scripts/
 if [ -f scripts/g1_warehouse_sim.py ]; then

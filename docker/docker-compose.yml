@@ -1,11 +1,14 @@
 # G1 Isaac Sim + ROS2 + Zenoh Bridge
 # Portable across DL (4×RTX 6000), Spark (GB10), and other NVIDIA GPU servers.
 #
-# Usage:
-#   cd /home/thakk100/Projects/thesis-sim
-#   docker compose up -d
-#   docker logs -f isaac-sim-ros   # watch sim startup
-#   docker logs -f zenoh-bridge    # watch bridge routes
+# Usage (from the repo root):
+#   docker compose -f docker/docker-compose.yml build
+#   docker compose -f docker/docker-compose.yml up -d
+#   docker logs -f isaac-sim-ros      # watch sim startup
+#   docker logs -f zenoh-bridge       # watch bridge routes
+#   # one-shot pipeline instead of the default warehouse sim:
+#   docker compose -f docker/docker-compose.yml run --rm isaac-sim \
+#     scripts/capture_screenshots.py --dump-pcd --out screenshots/run1
 #
 # On the laptop/client:
 #   ~/bin/zenoh-bridge-ros2dds -e tcp/<SPARK_IP>:7447 -n /sim_bridge --rest-http-port 8001
@@ -30,7 +33,7 @@ services:
       - ../:/workspace/thesis-sim
     entrypoint:
       - /bin/bash
-      - /workspace/thesis-sim/G1_sim/docker/entrypoint.sh
+      - /workspace/thesis-sim/docker/entrypoint.sh
     environment:
       - ACCEPT_EULA=Y
       - PRIVACY_CONSENT=Y
