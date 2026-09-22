@@ -10,4 +10,4 @@ lidar_overlay_side.png    - lidar cloud projected into that image (cv2, elevatio
 lidar_overlay_overview.png - lidar cloud projected into that image (cv2, elevation colored)
 lidar_overlay_d435.png    - lidar cloud projected into that image (cv2, elevation colored)
 
-warmup=240 steps  pelvis_z=0.724  drawn_pts=30290  rays=no  writer=yes
+warmup=240 steps  pelvis_z=0.724  drawn_pts=30288  rays=no  writer=yes
