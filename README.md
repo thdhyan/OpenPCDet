@@ -23,6 +23,98 @@ Run commands / gotchas → [HANDOFF.md](HANDOFF.md).
 
 ---
 
+## Installation (fresh machine / server box)
+
+Reproduces the environment in the table above from scratch. Official
+reference: [Isaac Lab v3.0.0-EA installation](https://isaac-sim.github.io/IsaacLab/v3.0.0-EA/source/setup/installation/index.html) —
+the `release/3.0.0` branch targets **Isaac Sim 6.1 + Python 3.12**.
+
+### 1. Prerequisites
+
+- Ubuntu 22.04+ x86_64 (aarch64 works — see server notes), GLIBC ≥ 2.35
+- NVIDIA production driver **≥ 580.65.06** (CUDA 13 PyTorch build;
+  `≥ 580.142` on DGX Spark)
+- ~40 GB free disk (wheels + extension cache), ≥ 32 GB RAM. 16 GB VRAM is
+  the nominal recommendation; headless single-sim runs fit in 8 GB
+- [`uv`](https://docs.astral.sh/uv/getting-started/installation/) package manager:
+  `curl -LsSf https://astral.sh/uv/install.sh | sh`
+- aarch64 / DGX Spark build deps:
+
+  ```bash
+  sudo apt install python3.12-dev libgl1-mesa-dev libx11-dev libxcursor-dev \
+     libxi-dev libxinerama-dev libxrandr-dev
+  ```
+
+### 2. Isaac Sim 6.1.0 (pip) + PyTorch cu130
+
+```bash
+VENV=/generalSSD/IsaacLab/isaac6/.venv   # hard-coded in the .envrc files — change both if different
+uv venv --python 3.12 --seed "$VENV"
+source "$VENV/bin/activate"
+uv pip install --upgrade pip
+
+uv pip install "isaacsim[all,extscache,ros2]==6.1.0.0" \
+  --extra-index-url https://pypi.nvidia.com \
+  --index-strategy unsafe-best-match --prerelease=allow
+uv pip install -U torch==2.12.0 --index-url https://download.pytorch.org/whl/cu130
+
+export OMNI_KIT_ACCEPT_EULA=YES          # required for headless / non-interactive boots
+isaacsim --no-window                     # smoke test
+```
+
+Extras: `extscache` pre-caches the Kit extensions (fast, near-offline first
+boot); `ros2` bundles the in-sim ROS 2 Jazzy `rclpy` + bridge OmniGraph nodes
+this project publishes with.
+
+### 3. Isaac Lab 3.0.0 EA (editable checkout)
+
+```bash
+git clone --branch release/3.0.0 https://github.com/isaac-sim/IsaacLab.git /generalSSD/IsaacLab-release-3.0.0
+cd /generalSSD/IsaacLab-release-3.0.0
+source "$VENV/bin/activate"              # same venv as Isaac Sim
+sudo apt install cmake build-essential
+./isaaclab.sh -i                         # editable core packages + default Newton/RL/visualizer deps
+./isaaclab.sh -p scripts/tutorials/00_sim/create_empty.py --headless   # verify
+```
+
+`-i` installs `isaaclab`, `isaaclab_tasks`, `isaaclab_rl`, … editable from
+`source/`. Minimal variant: `./isaaclab.sh -i core`, plus e.g.
+`-i 'rl[rsl-rl]'` for a single RL library.
+
+### 4. This repo
+
+```bash
+git clone <repo-url> G1_sim && cd G1_sim
+direnv allow                             # activates G1_sim/.envrc (venv + PYTHONPATH)
+rsync -a otherhost:G1_sim/assets/ assets/   # assets/ is git-ignored (robot USD, ONNX policies, lidar configs)
+python scripts/g1_warehouse_sim.py --headless   # first run pulls the warehouse USD from S3 CDN
+```
+
+### 5. Server-box notes (headless)
+
+- **No display needed** — every entrypoint runs `--headless`; the `.envrc`
+  already exports `OMNI_KIT_ACCEPT_EULA=YES`.
+- aarch64 (DGX Spark): install the build deps from step 1; if `libgomp`
+  warnings appear, prefix Python with
+  `LD_PRELOAD=/lib/aarch64-linux-gnu/libgomp.so.1`.
+- **Never source `/opt/ros/jazzy` inside the venv shell** — it clashes with
+  the bundled `isaacsim.ros2.core` rclpy. Use a second, non-venv shell for
+  the `ros2` CLI (see Quickstart).
+- **Never `uv sync` in this venv** — it is not a uv project env; a sync
+  re-resolves everything and can clobber pinned working versions (e.g.
+  `charset_normalizer==3.5.1`). Add packages with `uv pip install <pkg>`.
+- Budget VRAM: one sim instance per ~8 GB GPU. Check `nvidia-smi` before
+  co-running training + sim on a small card.
+- Results are plain files — pull them back over SSH
+  (`rsync` `screenshots/`, `logs/`).
+- Docker/HPC: the perception container lives in `docker/` (Dockerfile,
+  compose, CycloneDDS XMLs). For Isaac Lab in containers use
+  `./docker/container.py start`, then convert the image to Apptainer and
+  submit with `sbatch` on SLURM clusters — see the
+  [Docker and HPC section](https://isaac-sim.github.io/IsaacLab/v3.0.0-EA/source/setup/installation/index.html#docker-and-hpc-clusters).
+
+---
+
 ## Quickstart
 
 With [direnv](https://direnv.net/) installed, entering `G1_sim/` auto-activates the env:
@@ -73,7 +165,9 @@ G1_sim/
 │   ├── g1_patrol.py               # open-loop /g1/cmd_vel patrol commander
 │   ├── gen_mid360_rtx_config.py   # generates emitter-state JSON configs
 │   ├── convert_g1_urdf_to_usd.py  # URDF → USD (offline, no GPU)
-│   └── build_mid360_assets.py     # CSV → emitter-state JSON
+│   ├── build_mid360_assets.py     # CSV → emitter-state JSON
+│   ├── capture_screenshots.py     # thesis RGB/depth/env shots + LiDAR debug overlay
+│   └── bake_mid360_into_usd.py    # bake MID360 OmniLidar into robot USD (+verify)
 ├── dl/                            # offline USD-build workflow (no SimulationApp)
 │   ├── build_mid360_unitree_g1.py # pure pxr USD builder (no GPU/renderer)
 │   ├── launch_isaac_sim.py        # headless launcher for dl/ scene
