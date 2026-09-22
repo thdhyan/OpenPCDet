@@ -43,8 +43,12 @@ proven path shared with ``scripts/capture_screenshots.py`` (import
 USAGE
     cd ~/Projects/thesis/G1_sim && set -a && source .envrc && set +a
     python scripts/bake_mid360_into_usd.py             # bake + static verify
-    python scripts/bake_mid360_into_usd.py --fire-test # + boot the flat export
-                                                       #   and confirm points emit
+    python scripts/bake_mid360_into_usd.py --fire-test # FIRST point-read test of
+                                                       #   the existing exports in a
+                                                       #   pristine session (stage swaps
+                                                       #   kill the sensor engine), then
+                                                       #   bake fresh ones; run twice to
+                                                       #   validate a new bake
 """
 
 from __future__ import annotations
@@ -66,9 +70,10 @@ STANDALONE_USDA = REPO / "assets/mid360_omnilidar.usda"
 # headless/no-ros2 so nothing warehouse- or ROS-related runs.
 _parser = argparse.ArgumentParser(description=__doc__)
 _parser.add_argument("--fire-test", action="store_true",
-                     help="after baking, open the flat export and confirm the "
-                          "lidar emits points through the built-in LidarSensor "
-                          "wrapper (one extra ~60 s)")
+                     help="before baking, reference the EXISTING exports into "
+                          "the pristine session stage and confirm they emit "
+                          "points via the built-in LidarSensor wrapper "
+                          "(one extra ~60 s; bake once first to create them)")
 _cli = _parser.parse_args()
 
 sys.argv = ["g1_warehouse_sim.py", "--headless", "--no-ira", "--no-ros2"]
@@ -211,28 +216,40 @@ def mesh_stats(stage: Usd.Stage) -> tuple[int, int]:
 
 
 def fire_test() -> bool:
-    """Open the flat export, drop in test geometry, read through the built-in
-    LidarSensor wrapper - the same consumption path another project would use."""
+    """Prove the exports emit points when consumed the way another project
+    would: REFERENCE them into the pristine boot stage, wrap with the built-in
+    LidarSensor wrapper, read back returns.
+
+    Never ctx.open_stage() first: every open_stage run returned 0 points/0
+    frames from BOTH a baked and a live spawn_mid360 prim in the same session
+    (time advancing normally, attr/schema diff NONE between them) - and those
+    sessions had already gone through main's new_stage()+open_stage(robot)
+    as well. capture_screenshots/g1_warehouse NEVER replace the boot stage
+    and the sensor works there, so pristine-session + reference is the proven
+    shape (and referencing into a project is the documented consumption
+    pattern anyway).
+
+    Three prims A/B'd in one session:
+      live - spawn_mid360 authored fresh (capture's proven baseline)
+      flat - reference into g1_29dof_sensors_mid360_flat.usd at its authored
+             prim path (the single-file copy-into-another-project export)
+      usda - reference into mid360_omnilidar.usda (identity standalone)
+    Main() calls this BEFORE any stage swap; run a bake once first so the
+    exports exist.
+    """
     from isaacsim.sensors.experimental.rtx import (
         LidarSensor,
         parse_generic_model_output_data,
     )
 
-    log(f"fire test: opening {FLAT_USD.name}")
+    log("fire test: consuming exports by reference into the pristine session stage")
     ctx = omni.usd.get_context()
-    ctx.open_stage(str(FLAT_USD))
-    stage = ctx.get_stage()
+    stage = ctx.get_stage()  # boot stage - never replaced (capture parity)
     if stage is None:
-        log("    FAIL  could not open flat export")
+        log("    FAIL  no session stage")
         return False
-    # Let Kit finish processing the new stage before authoring into it.
-    # Authoring during open_stage's background layer churn throws
-    # pxr.Tf.ErrorException: "Detected usd threading violation ... Concurrent
-    # changes to layer(s)" (seen on both Scene.Define and SimulationContext's
-    # auto-create); pumping a few frames settles serials (same pattern as
-    # capture_screenshots.py after build_scene_fallback).
-    for _ in range(10):
-        omni.kit.app.get_app().update()
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
 
     # RTX ray-traces rendered geometry: floor + 4 walls around the robot.
     ground = UsdGeom.Cube.Define(stage, "/BakeTest/Ground")
@@ -242,10 +259,6 @@ def fire_test() -> bool:
         wall = UsdGeom.Cube.Define(stage, f"/BakeTest/Wall{i}")
         wall.AddScaleOp().Set(Gf.Vec3f(0.2, 12.0, 6.0))
         wall.AddTranslateOp().Set(Gf.Vec3d(*[float(v) for v in tr]))
-
-    lidar_path = str([p for p in stage.Traverse() if p.GetTypeName() == "OmniLidar"][0].GetPath())
-    log(f"    wrapping {lidar_path} with LidarSensor")
-    sensor = LidarSensor(lidar_path, annotators=["generic-model-output"])
 
     # SimulationContext, not SimulationApp: .step(render=True) lives on
     # isaacsim.core.api.SimulationContext (SimulationApp has no step() on
@@ -261,31 +274,142 @@ def fire_test() -> bool:
     for _ in range(5):  # settle our own cube/scene authoring before sim init
         omni.kit.app.get_app().update()
     sim_ctx = SimulationContext()
+
+    # Wrap AFTER SimulationContext exists - the proven order in both working
+    # scripts (capture_screenshots.py: sim at line 117, LidarSensor at 218;
+    # g1_warehouse_sim.py likewise).
+    stage.DefinePrim("/BakeTest/World", "Xform")
+    live_path = spawn_mid360(
+        "/BakeTest/World",
+        config_dir=CONFIG_DIR,
+        translation=(0.0, 0.0, 2.0),
+        orientation=MID360_QUAT_WXYZ,
+    )[0]
+
+    # Consume both exports by primPath reference - what another project does.
+    # USD semantics: a reference puts the TARGET prim's content AT THE
+    # REFERRING PRIM's path (it does not create a child named after the
+    # target) - so the referrer must itself be the typeless Livox_Mid360_R
+    # prim, under a positioned Xform holder that keeps its own xform ops.
+    # (Statically validated with pure pxr: composed type=OmniLidar, s001
+    # azimuth 128 values, apiSchemas metadata intact.)
+    stage.DefinePrim("/BakeTest/Flat", "Xform")
+    flat_holder = stage.GetPrimAtPath("/BakeTest/Flat")
+    UsdGeom.Xformable(flat_holder).AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 2.0))
+    flat_path = "/BakeTest/Flat/Livox_Mid360_R"
+    flat_ref = stage.DefinePrim(flat_path)  # typeless; type composes from target
+    flat_ref.GetReferences().AddReference(
+        str(FLAT_USD), "/g1_29dof/mid360_link/Livox_Mid360_R"
+    )
+
+    stage.DefinePrim("/BakeTest/Usda", "Xform")
+    usda_holder = stage.GetPrimAtPath("/BakeTest/Usda")
+    UsdGeom.Xformable(usda_holder).AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 4.0))
+    usda_path = "/BakeTest/Usda/Livox_Mid360_R"
+    usda_ref = stage.DefinePrim(usda_path)
+    usda_ref.GetReferences().AddReference(str(STANDALONE_USDA), "/Livox_Mid360_R")
+
+    paths = {"live": live_path, "flat": flat_path, "usda": usda_path}
+    for k, p in paths.items():
+        pr = stage.GetPrimAtPath(p)
+        if not pr.IsValid() or pr.GetTypeName() != "OmniLidar":
+            log(f"    FAIL  [{k}] {p}: valid={pr.IsValid()} type={pr.GetTypeName()!r} "
+                "- reference did not compose")
+            return False
+    log(f"    prims: {paths}")
+
+    def _sig(path: str) -> tuple[set, set]:
+        pr = stage.GetPrimAtPath(path)
+        names = {a.GetName() for a in pr.GetAttributes() if a.HasAuthoredValue()}
+        return names, set(pr.GetAppliedSchemas())
+
+    f_names, f_sch = _sig(flat_path)
+    l_names, l_sch = _sig(live_path)
+    log(f"    attr-diff flat-only : {sorted(f_names - l_names) or 'NONE'}")
+    log(f"    attr-diff live-only : {sorted(l_names - f_names) or 'NONE'}")
+    log(f"    schema-diff flat-only: {sorted(f_sch - l_sch) or 'NONE'}  "
+        f"live-only: {sorted(l_sch - f_sch) or 'NONE'}")
+
+    # Capture parity: an explicit render product per sensor prim before the
+    # wrap (capture_screenshots.py:198). No writer: its list-attach API is
+    # unimplemented on this build ("Attaching a list of render products is
+    # currently not implemented") and it is debug-viz only.
+    import omni.replicator.core as rep  # noqa: E402
+
+    for p in paths.values():
+        rep.create.render_product(p, [1, 1])
+
+    sensors = {k: LidarSensor(p, annotators=["generic-model-output"]) for k, p in paths.items()}
+    log(f"    wrapped {list(sensors)}")
+
     timeline = omni.timeline.get_timeline_interface()
     timeline.play()
-    total = 0
-    frames_with_points = 0
+
+    def _now() -> float:
+        """Sim time for diagnostics - API name differs across builds."""
+        for obj, attr in ((sim_ctx, "current_time"), (timeline, "get_current_time")):
+            try:
+                v = getattr(obj, attr)
+                return float(v() if callable(v) else v)
+            except Exception:
+                continue
+        return -1.0
+
+    for _ in range(10):  # render-product warmup before the first read
+        sim_ctx.step(render=True)
+    totals = {k: 0 for k in sensors}
+    frames_pts = {k: 0 for k in sensors}
+    n_none = {k: 0 for k in sensors}
+    n_empty = {k: 0 for k in sensors}
     for i in range(240):
         sim_ctx.step(render=True)
-        data, _info = sensor.get_data("generic-model-output")
-        if data is None:
-            continue
-        gmo = parse_generic_model_output_data(data)
-        if gmo.x is None or len(gmo.x) == 0:
-            continue
-        frames_with_points += 1
-        total += len(gmo.x)
-        if i % 60 == 0:
-            log(f"    frame {i:>3}  points={len(gmo.x)}  running total={total}")
+        for k, sensor in sensors.items():
+            data, _info = sensor.get_data("generic-model-output")
+            if data is None:
+                n_none[k] += 1
+                continue
+            gmo = parse_generic_model_output_data(data)
+            if gmo.x is None or len(gmo.x) == 0:
+                n_empty[k] += 1
+                if i == 0:
+                    try:
+                        names = getattr(getattr(data, "dtype", None), "names", None)
+                        row0 = data[0] if len(data) else None
+                        nz = ""
+                        if names and "x" in names:
+                            import numpy as _np
+
+                            nz = f" nonzero_x={int(_np.count_nonzero(data['x']))}"
+                        log(f"    [{k}] frame0 empty: dtype_names={names} "
+                            f"row0={row0!r}{nz} t={_now():.3f}")
+                    except Exception as exc:  # noqa: BLE001
+                        log(f"    [{k}] frame0 diag failed: {exc}")
+                continue
+            frames_pts[k] += 1
+            totals[k] += len(gmo.x)
+            if i == 0:
+                log(f"    [{k}] frame0: {len(gmo.x)} pts  t={_now():.3f}")
+    t_end = _now()
     timeline.stop()
 
-    ok = total >= 1000
-    log(f"    {'PASS' if ok else 'FAIL'}  {total} points across {frames_with_points}/240 frames")
-    return ok
+    for k in sensors:
+        ok_k = totals[k] >= 1000
+        log(f"    {'PASS' if ok_k else 'FAIL'}  [{k}] {totals[k]} pts across "
+            f"{frames_pts[k]}/240 frames (data=None {n_none[k]}, empty {n_empty[k]})")
+    log(f"    sim time advanced to t={t_end:.3f}")
+    # The bake's claim is that the FILES work: flat + standalone must emit.
+    # (live = session-health baseline; logged above either way.)
+    return totals["flat"] >= 1000 and totals["usda"] >= 1000
 
 
 def main() -> int:
     gw.enable_extensions()
+    # Mirror capture_screenshots.py line 99: the .nodes extension registers the
+    # RTX lidar node-graph node types the sensor pipeline ticks on.
+    _mgr = omni.kit.app.get_app().get_extension_manager()
+    _mgr.set_extension_enabled_immediate("isaacsim.sensors.rtx.nodes", True)
+    for _ in range(5):
+        omni.kit.app.get_app().update()
 
     profiles = sorted(CONFIG_DIR.glob("Livox_Mid360_*.json"))
     if not profiles:
@@ -295,6 +419,22 @@ def main() -> int:
         log(f"WARN: {len(profiles)} profiles in rotary dir; verifying against first")
     profile = json.loads(profiles[0].read_text())["profile"]
     log(f"source profile: {profiles[0].name} ({len(profile['emitterStates'])} emitter states)")
+
+    # --- 0. optional fire test: the ONLY thing --fire-test runs -------------
+    # Two constraints collide in one process: (a) the RTX sensor engine dies
+    # with stage swaps - every open_stage/new_stage-after-unwrap run returned
+    # 0/240 frames from live AND baked prims, while capture/warehouse (boot
+    # stage never replaced) emit fine - so fire must run FIRST on a pristine
+    # session; (b) the bake's steps 1-2 swap stages, which SEGFAULTS with
+    # the fire test's live sensors still attached (observed exit 139 after
+    # the fire PASS). So --fire-test = fire only; bake in a separate
+    # invocation, then fire-test the result.
+    if _cli.fire_test:
+        if not (FLAT_USD.exists() and STACK_USD.exists() and STANDALONE_USDA.exists()):
+            log("FAIL: --fire-test needs existing exports (run one bake first)")
+            return 1
+        log("fire test (pre-existing exports, pristine session):")
+        return 0 if fire_test() else 1
 
     ctx = omni.usd.get_context()
     all_ok = True
@@ -358,10 +498,7 @@ def main() -> int:
     log("verifying standalone subtree:")
     all_ok &= verify(STANDALONE_USDA, profile, (0.0, 0.0, 0.0), IDENTITY_QUAT_WXYZ)
 
-    # --- 5. optional fire test ---------------------------------------------
-    if _cli.fire_test:
-        log("fire test:")
-        all_ok &= fire_test()
+    # --- 5. (fire test is a separate invocation: --fire-test) ----------------
 
     if all_ok:
         log("DONE - all checks passed")
