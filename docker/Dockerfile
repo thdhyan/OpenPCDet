@@ -43,6 +43,19 @@ RUN ARCH=$(dpkg --print-architecture) && \
     rm -f /tmp/cuda-keyring.deb && \
     rm -rf /var/lib/apt/lists/*
 
+# ── 1b. VPI4 apt repo (amd64 only) ───────────────────────────────────────────
+# Isaac ROS needs libnvvpi4/vpi4-dev. On arm64 those come from the Isaac ROS
+# repo itself (proven on spark2); on x86_64 NVIDIA publishes host VPI via the
+# Jetson x86_64 repo - docs.nvidia.com/vpi/installation.html (Ubuntu 24.04).
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "amd64" ]; then \
+      curl -fsSL https://repo.download.nvidia.com/jetson/jetson-ota-public.asc \
+        -o /usr/share/keyrings/nvidia-jetson-ota.asc && \
+      echo "deb [signed-by=/usr/share/keyrings/nvidia-jetson-ota.asc arch=amd64] https://repo.download.nvidia.com/jetson/x86_64/noble r39.2 main" \
+        > /etc/apt/sources.list.d/nvidia-vpi.list && \
+      apt-get update; \
+    fi
+
 # ── 2. Add Isaac ROS apt repo ────────────────────────────────────────────────
 RUN mkdir -p /usr/share/keyrings /etc/apt/keyrings && \
     curl -fsSL https://isaac.download.nvidia.com/isaac-ros/repos.key -o /tmp/isaac-ros.key && \
