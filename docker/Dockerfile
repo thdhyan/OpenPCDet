@@ -32,7 +32,10 @@ RUN apt-get update && apt-get install -y curl gnupg && \
 # Isaac ROS NVBLOX needs libnppidei.so.13, libnppim.so.13, libnppitc.so.13,
 # libnppc.so.13. These are only in the real CUDA 13 NPP package.
 # We also install cuda-cudart-13-0 (pulled as dep) which provides libcudart.so.13.
-RUN curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/cuda-keyring_1.1-1_all.deb \
+# Repo path is arch-specific: sbsa = ARM64 (Sparks), x86_64 = amd64.
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then CUDA_ARCH="sbsa"; else CUDA_ARCH="x86_64"; fi && \
+    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${CUDA_ARCH}/cuda-keyring_1.1-1_all.deb \
       -o /tmp/cuda-keyring.deb && \
     dpkg -i /tmp/cuda-keyring.deb && \
     apt-get update && \
