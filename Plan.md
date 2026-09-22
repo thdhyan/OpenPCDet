@@ -15,9 +15,10 @@ published over ROS2 for RViz visualisation and 3D pedestrian detection.
 
 | Item | Value |
 |---|---|
-| Conda env | `isaac`, Python 3.12 (Isaac Sim 6.0.1, pip-installed, no standalone app bundle) |
-| ROS2 | jazzy (`/opt/ros/jazzy`, Python 3.12) — `~/.bashrc` does NOT source it, do it manually |
-| torch | 2.7.0+cu126 |
+| Python env | uv venv `/generalSSD/IsaacLab/isaac6/.venv`, Python 3.12 (Isaac Sim 6.1.0, pip-installed) |
+| Isaac Lab | 3.0 EA (`release/3.0.0`) checkout `/generalSSD/IsaacLab-release-3.0.0`, editable install in the venv |
+| ROS2 | jazzy — in-sim bundled rclpy via `isaacsim.ros2.bridge`; system `/opt/ros/jazzy` only for out-of-sim tools (`~/.bashrc` does NOT source it) |
+| torch | 2.12.0+cu130 (measured) |
 | GPU | RTX 4060 Laptop **8 GB** (Ada, sm_89) — only one Isaac Sim instance fits |
 
 ## Architecture decisions
@@ -99,6 +100,26 @@ exactly (`g1_warehouse_sim.py`: `mount = f"{ROBOT_PRIM}/mid360_link"`,
 longer a runtime dependency. URDF/meshes/scan-pattern vendored under
 `assets/` (git-ignored — copy `assets/robot/` and `assets/scan_patterns/`
 manually if another machine needs them).
+
+**charset_normalizer boot crash (fixed 2026-09-22, Isaac Sim 6.1 upgrade)**:
+six failed boots before root cause — Kit's ext manager re-imports
+`charset_normalizer` mid-boot from its pip prebundles, and when the compiled
+`cd.so` pair initialized against `md.py` **executed from source** (28-slot
+`CharInfo=240`, plain `MessDetector=16`), cython init aborted
+("MessDetectorPlugin size changed … Expected 24 … got 16") and cascaded into
+`isaacsim.core.api` / `sensors.experimental.rtx` import failures. Run #6's
+signature was reproduced exactly by forcing source-exec in isolation; a
+`sys.addaudithook` trace then showed which path each import took. Fix: all
+five on-disk charset copies byte-synced to one compiled 3.5.1 set, and
+`scripts/g1_warehouse_sim.py` defensively pre-imports
+`charset_normalizer{,.api,.md}` *before* `from isaacsim import SimulationApp`
+(the audit-hook tripwire stays in place to catch any future source re-import).
+⚠ The site-packages copy is now 3.5.1 against isaacsim_kernel's `==3.3.2`
+pin — **do not `uv sync` this venv** (original 3.3.2 survives in
+`~/.cache/uv/archive-v0/hks5mxSSeqdWVTDD/`). Runs #7/#8 clean: 19.5 s to app
+ready (was 43–96 s), 200 steps exit 0, and every ROS 2 topic (RGB, depth,
+`/livox/mid360/points/a`, `/tf`, `/g1/imu`, `/g1/joint_states`) verified live
+from `/opt/ros/jazzy`.
 
 ## Open technical risk
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """G1 in a populated warehouse: RTX LiDAR + camera + IMU + decoupled_wbc
-locomotion, plus IRA-driven wandering humans and Nova Carters, on Isaac Sim 6.0.
+locomotion, plus IRA-driven wandering humans and Nova Carters, on Isaac Sim 6.1.0.
 
-    conda activate isaac
+    source /generalSSD/IsaacLab/isaac6/.envrc   # uv venv; or cd into the repo with direnv
     python scripts/g1_warehouse_sim.py --headless --steps 200
 
 Extends ``g1_rtx_sim.py``'s proven sensor/locomotion pipeline (kept
@@ -29,7 +29,54 @@ gracefully rather than aborting.
 
 import argparse
 import sys
+import traceback
 from pathlib import Path
+
+# --- charset_normalizer forensics + defensive pin (Plan.md, run #6) --------
+# Kit's ext manager re-imports charset_normalizer mid-boot from its pip
+# prebundles; a mismatched cd/md pair aborts cython module init
+# ("MessDetectorPlugin size changed ... Expected 24 ... got 16") and cascades
+# into isaacsim.core.api / sensors.experimental.rtx import failures. Pre-load
+# one coherent compiled set from site-packages *before* Kit boots, and
+# audit-hook every later charset_normalizer import so the Kit log records
+# which file (and which cached sys.modules state) each subsequent load used.
+def _cs_audit(event, args):
+    if event == "import":
+        name = args[0] if args else None
+        if isinstance(name, str) and name.startswith("charset_normalizer"):
+            cached = {
+                k: getattr(sys.modules.get(k), "__file__", "?")
+                for k in sorted(sys.modules)
+                if k.startswith("charset_normalizer")
+            }
+            sys.stderr.write(
+                f"[cs-audit] import {name} file={args[1] if len(args) > 1 else None}\n"
+                f"[cs-audit] cached={cached}\n"
+                f"[cs-audit] sys.path[:12]={sys.path[:12]}\n"
+                f"[cs-audit] stack:\n{''.join(traceback.format_stack(limit=8))}\n"
+            )
+            sys.stderr.flush()
+    elif event == "exec":
+        fname = getattr(args[0], "co_filename", "")
+        if isinstance(fname, str) and "charset_normalizer" in fname:
+            sys.stderr.write(f"[cs-audit] exec {fname}\n")
+            sys.stderr.flush()
+
+
+sys.addaudithook(_cs_audit)
+
+import charset_normalizer
+import charset_normalizer.api  # noqa: F401  - pins compiled cd/md/constants
+import charset_normalizer.md
+
+sys.stderr.write(
+    f"[cs-audit] PIN pkg={charset_normalizer.__file__} "
+    f"md={charset_normalizer.md.__file__} "
+    f"CharInfo={charset_normalizer.md.CharInfo.__basicsize__} "
+    f"MDP={charset_normalizer.md.MessDetectorPlugin.__basicsize__}\n"
+)
+sys.stderr.flush()
+# --- end charset_normalizer forensics --------------------------------------
 
 from isaacsim import SimulationApp
 
@@ -125,7 +172,17 @@ _XR_KIT = _os.path.join(
 if args_cli.xr and not _os.path.exists(_XR_KIT):
     # fallback: try the short name (works on some IsaacSim builds)
     _XR_KIT = "isaacsim.exp.base.xr.vr"
-_experience = _XR_KIT if args_cli.xr else "isaacsim.exp.full"
+# Isaac Sim 6.1.0 (Kit 110.3): Kit no longer resolves the bare experience
+# name against the --ext-folder paths ("Can't read isaacsim.exp.full") —
+# same failure the XR branch hit. Pass the full path when it exists.
+_FULL_KIT = _os.path.join(
+    _os.path.dirname(_site.getsitepackages()[0]),  # .venv/lib/python3.12
+    "site-packages/isaacsim/apps/isaacsim.exp.full.kit",
+)
+if args_cli.xr:
+    _experience = _XR_KIT
+else:
+    _experience = _FULL_KIT if _os.path.exists(_FULL_KIT) else "isaacsim.exp.full"
 
 simulation_app = SimulationApp(
     {
@@ -218,6 +275,15 @@ GUI_EXTENSIONS = [
 def enable_extensions() -> None:
     manager = omni.kit.app.get_app().get_extension_manager()
 
+    # Isaac Sim 6.1.0: these live in extsDeprecated/ (deprecated since 6.0 in
+    # favor of isaacsim.core.experimental.*, but still shipped) and are NOT
+    # autoloaded by the experience - enable explicitly before importing.
+    #   isaacsim.core.api    -> SimulationContext (main())
+    #   isaacsim.core.prims  -> Articulation (main())
+    #   isaacsim.core.utils  -> stage utils (g1_sim/warehouse.py)
+    for ext in ("isaacsim.core.api", "isaacsim.core.prims", "isaacsim.core.utils"):
+        manager.set_extension_enabled_immediate(ext, True)
+
     # Must precede any rclpy import - see g1_rtx_sim.py.
     manager.set_extension_enabled_immediate("isaacsim.ros2.bridge", True)
     manager.set_extension_enabled_immediate("isaacsim.sensors.rtx", True)
@@ -306,9 +372,11 @@ def spawn_g1(stage) -> None:
 
 
 def main() -> None:
+    enable_extensions()
+    # After enable_extensions(): Isaac Sim 6.1.0 moved isaacsim.core.api to
+    # extsDeprecated — the extension must be enabled before this import.
     from isaacsim.core.api import SimulationContext
 
-    enable_extensions()
     _log_sensor_settings()
 
     cache_path = REPO / args_cli.cache_scene

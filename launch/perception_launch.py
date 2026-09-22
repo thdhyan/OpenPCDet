@@ -42,7 +42,7 @@ def generate_launch_description():
 
         LogInfo(msg=["Launching CUVSLAM + NVBLOX perception stack"]),
 
-        # ── 1. Static TF: World → map ─────────────────────────────────────
+        # ── 1a. Static TF: World → map ────────────────────────────────────
         # Bridges the sim's World tree into CUVSLAM's map tree so NVBLOX can
         # trace: map → odom → pelvis → ... → d435_color_optical_frame
         Node(
@@ -51,6 +51,19 @@ def generate_launch_description():
             name="world_to_map",
             arguments=["0", "0", "0", "0", "0", "0", "World", "map"],
             parameters=[{"use_sim_time": True}],
+        ),
+
+        # ── 1b. TF fallback: map → pelvis (on /tf, NOT /tf_static) ─────────
+        # NVBLOX subscribes to /tf for frame lookups, but static_transform_
+        # publisher only publishes on /tf_static. This Python node uses
+        # TransformBroadcaster to publish map→pelvis on /tf so NVBLOX can
+        # always find the pelvis frame. CUVSLAM's higher-frequency TF overrides
+        # this when tracking.
+        ExecuteProcess(
+            cmd=["python3",
+                 "/workspace/thesis-sim/G1_sim/launch/tf_fallback.py",
+                 "--ros-args", "-p", "use_sim_time:=true"],
+            output="screen",
         ),
 
         # ── 2. Depth format converter (32FC1 m → uint16 mm) ───────────────
