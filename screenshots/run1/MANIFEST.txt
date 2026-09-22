@@ -1,0 +1,13 @@
+front_camera_rgb.png      - D435 RGB (640x480, torso mount, pitched down ~47.6 deg)
+front_camera_depth.png    - D435 depth, TURBO false color, 0-10 m
+env_front              - free camera (9.0, 1.4, 1.8) -> (0.0, 0.0, 1.05), 1920x1080
+env_side               - free camera (-4.0, -7.0, 1.6) -> (3.0, 0.5, 0.9), 1920x1080
+env_overview           - free camera (7.0, -8.0, 5.5) -> (1.0, 0.0, 0.4), 1920x1080
+lidar_debug_viewport.png  - viewport (overview cam) + RtxSensorDebugDrawPointCloud writer
+                            + omni.debugdraw elevation-colored accumulation (blue low -> red high)
+lidar_overlay_front.png   - lidar cloud projected into that image (cv2, elevation colored)
+lidar_overlay_side.png    - lidar cloud projected into that image (cv2, elevation colored)
+lidar_overlay_overview.png - lidar cloud projected into that image (cv2, elevation colored)
+lidar_overlay_d435.png    - lidar cloud projected into that image (cv2, elevation colored)
+
+warmup=240 steps  pelvis_z=0.724  drawn_pts=30290  rays=no  writer=yes
