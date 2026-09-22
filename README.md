@@ -84,7 +84,7 @@ sudo apt install cmake build-essential
 ### 4. This repo
 
 ```bash
-git clone <repo-url> G1_sim && cd G1_sim
+git clone -b isaacsim6-rtx-emitter git@github.com:thdhyan/OpenPCDet.git G1_sim && cd G1_sim
 direnv allow                             # activates G1_sim/.envrc (venv + PYTHONPATH)
 rsync -a otherhost:G1_sim/assets/ assets/   # assets/ is git-ignored (robot USD, ONNX policies, lidar configs)
 python scripts/g1_warehouse_sim.py --headless   # first run pulls the warehouse USD from S3 CDN
