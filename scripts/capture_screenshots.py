@@ -48,6 +48,11 @@ ap.add_argument(
     default=12,
     help="Rolling lidar accumulation window in sim steps (~6 steps = one 10 Hz full sweep)",
 )
+ap.add_argument(
+    "--dump-pcd",
+    action="store_true",
+    help="Also save the final cloud to <out>/lidar_cloud.pcd (ASCII; intensity = elevation deg, same ramp as the overlays)",
+)
 cli = ap.parse_args()
 
 ENV_W, ENV_H = (int(v) for v in cli.env_res.lower().split("x"))
@@ -674,6 +679,24 @@ manifest = [
     f"rays={'yes' if have_lines else 'no'}  writer={'yes' if lidar_writer else 'no'}",
 ]
 (OUT_DIR / "MANIFEST.txt").write_text("\n".join(manifest) + "\n")
+
+# Optional PCD export of the final accumulated cloud (world frame).
+if cli.dump_pcd:
+    if len(world_pts):
+        pcd_path = OUT_DIR / "lidar_cloud.pcd"
+        rel = world_pts - np.asarray(sensor_origin)
+        rng = np.linalg.norm(rel, axis=1) + 1e-9
+        el = np.degrees(np.arcsin(np.clip(rel[:, 2] / rng, -1, 1)))
+        with open(pcd_path, "w") as fh:
+            fh.write("# .PCD v0.7 - Point Cloud Data file format\n")
+            fh.write("VERSION 0.7\nFIELDS x y z intensity\nSIZE 4 4 4 4\nTYPE F F F F\n")
+            fh.write("COUNT 1 1 1 1\n")
+            fh.write(f"WIDTH {len(world_pts)}\nHEIGHT 1\nVIEWPOINT 0 0 0 1 0 0 0\n")
+            fh.write(f"POINTS {len(world_pts)}\nDATA ascii\n")
+            np.savetxt(fh, np.column_stack([world_pts, el]), fmt="%.4f %.4f %.4f %.2f")
+        log(f"dumped {pcd_path.name}  {len(world_pts)} pts (intensity = elevation deg)")
+    else:
+        log("dump-pcd: no points to dump")
 
 log("---- done ----")
 for p in sorted(OUT_DIR.iterdir()):
