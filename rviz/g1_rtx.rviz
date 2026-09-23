@@ -333,7 +333,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Best Effort
-        Value: /livox/mid360/a
+        Value: /livox/mid360/points/a
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
@@ -366,7 +366,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Best Effort
-        Value: /livox/mid360/b
+        Value: /livox/mid360/points/b
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
@@ -399,7 +399,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Best Effort
-        Value: /livox/mid360/c
+        Value: /livox/mid360/points/c
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
@@ -432,7 +432,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Best Effort
-        Value: /livox/mid360/d
+        Value: /livox/mid360/points/d
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
@@ -447,8 +447,8 @@ Visualization Manager:
         Depth: 1
         Durability Policy: Volatile
         History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /g1/d43/rgb
+        Reliability Policy: Best Effort
+        Value: /g1/camera/rgb
       Value: true
     - Class: rviz_default_plugins/Image
       Enabled: true
@@ -461,8 +461,8 @@ Visualization Manager:
         Depth: 1
         Durability Policy: Volatile
         History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /g1/d43/depth
+        Reliability Policy: Best Effort
+        Value: /g1/camera/depth
       Value: true
     - Class: rviz_default_plugins/Image
       Enabled: true
@@ -475,8 +475,8 @@ Visualization Manager:
         Depth: 1
         Durability Policy: Volatile
         History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /g1/d435/seg
+        Reliability Policy: Best Effort
+        Value: /g1/camera/semantic
       Value: true
     - Alpha: 1
       Autocompute Intensity Bounds: true
@@ -507,7 +507,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /g1/camera/depth/points
+        Value: /g1/camera/depth/color/points
       Use Fixed Frame: true
       Use rainbow: true
       Value: true

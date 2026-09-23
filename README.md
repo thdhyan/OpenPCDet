@@ -189,6 +189,7 @@ G1_sim/
 │   ├── mid360_emitter_states.json # 4 beam groups × 40 states × 1250 emitters
 │   └── g1+Cam+warehouse.usda      # combined G1 + camera + warehouse scene
 ├── g1_sim/                        # sim Python modules
+│   ├── g1_robot.py                # load_g1() — G1 + camera/LiDAR/4×IMU, all ON by default
 │   ├── rtx_publisher.py           # RtxLidarPublisher — LiDAR → /livox/mid360/points/{a,b,…}
 │   ├── rtx_camera.py              # D435 camera + IMU spawn/attach
 │   ├── rgbd_publisher.py          # depth → /g1/camera/depth/color/points
@@ -235,10 +236,36 @@ G1_sim/
 | `/g1/camera/depth/color/points` | `PointCloud2` | synthesized RGBD |
 | `/tf` | `TFMessage` | OmniGraph |
 | `/g1/joint_states` | `JointState` | OmniGraph |
-| `/g1/imu` | `Imu` | OmniGraph |
+| `/g1/imu/pelvis` | `Imu` | OmniGraph (frame `imu_in_pelvis`) |
+| `/g1/imu/torso` | `Imu` | OmniGraph (frame `imu_in_torso`) |
+| `/g1/imu` | `Imu` | legacy alias of the torso IMU (perception remap) |
+| `/livox/mid360/imu` | `Imu` | OmniGraph (Mid-360 built-in ICM-40609, frame `mid360_link`) |
+| `/g1/camera/imu` | `Imu` | OmniGraph (RealSense D435i BMI055, frame `d435_link`) |
 | `/clock` | `Clock` | OmniGraph |
 
 Subscribed: `/g1/cmd_vel` (`Twist`) → WBC velocity command at 50 Hz.
+
+---
+
+## Loading the G1 (`g1_sim/g1_robot.py`)
+
+One call spawns the robot and its whole sensor stack — every sensor **on by
+default**, each individually disableable:
+
+```python
+from g1_sim.g1_robot import load_g1
+
+g1 = load_g1()                             # camera + LiDAR + 4 IMUs + TF/clock/joints
+g1 = load_g1(camera=False, imu_camera=False)   # drop specific sensors
+g1 = load_g1(ros2=False)                   # sensor prims only (IsaacLab training)
+while stepping:
+    g1.step(sim.current_time)              # LiDAR + RGB-D cloud publishing
+g1.destroy()
+```
+
+Datasheet noise parameters for all four IMUs are exported as
+`g1_sim.g1_robot.IMU_DATASHEET` (Isaac's IMU schema has no noise model, so
+downstream EKF/training code consumes these).
 
 ---
 

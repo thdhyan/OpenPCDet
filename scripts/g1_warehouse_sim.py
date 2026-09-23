@@ -16,8 +16,9 @@ untouched and still the thing to run for a bare-warehouse-free scene) with:
 - wandering humans and Nova Carters spawned via IRA
   (``g1_sim.ira_actors`` - see its docstring for a hard-coded-frame-budget
   bug found and worked around there)
-- an IMU publisher (``g1_sim.rtx_camera.spawn_imu_sensor`` /
-  ``attach_imu_publisher``) - there wasn't one before this script
+- robot + full sensor stack via ``g1_sim.g1_robot.load_g1`` (D435 RGB-D,
+  Mid-360 LiDAR, four IMUs - pelvis/torso/Mid-360/RealSense - plus TF,
+  joint states, clock; every sensor ON by default, kwargs disable each)
 
 Scene bootstrap order matters: IRA's ``setup_simulation()`` opens the
 warehouse **as a new root stage** (a full replace, not a reference), so it
@@ -236,22 +237,9 @@ import omni.timeline
 import omni.usd
 from pxr import Gf, UsdGeom, UsdPhysics, Usd
 
-from g1_sim.rtx_camera import (
-    OPTICAL_FRAME,
-    apply_semantics,
-    attach_camera_publishers,
-    attach_cmd_vel_subscriber,
-    attach_imu_publisher,
-    attach_robot_state_publishers,
-    spawn_camera,
-    spawn_imu_sensor,
-)
-from g1_sim.rtx_lidar import (
-    MID360_POS,
-    MID360_QUAT_WXYZ,
-    blind_radius,
-    spawn_mid360,
-)
+from g1_sim.g1_robot import load_g1
+from g1_sim.rtx_camera import attach_cmd_vel_subscriber
+from g1_sim.rtx_lidar import MID360_POS, blind_radius
 from g1_sim.warehouse import WAREHOUSE_USD, build_flat_ground, load_environment
 
 ENABLE_ROS2 = not args_cli.no_ros2
@@ -346,31 +334,6 @@ def build_scene_fallback(stage) -> None:
         UsdPhysics.CollisionAPI.Apply(box.GetPrim())
 
 
-def spawn_g1(stage) -> None:
-    if not G1_USD.exists():
-        raise SystemExit(f"[WH] {G1_USD} not found - run scripts/convert_g1_urdf_to_usd.py first")
-    # After IRA's setup, the stage's root layer *is* the remote warehouse USD
-    # (a full stage-open, not a reference - see g1_sim/ira_actors.py) and
-    # becomes the default edit target. Authoring a reference to a local
-    # filesystem path there composed the arc (AddReference returns True,
-    # HasAuthoredReferences() is True) but its content silently failed to
-    # resolve (pelvis and every other child prim missing) - almost certainly
-    # the Nucleus/HTTP-aware asset resolver mishandling a plain absolute
-    # POSIX path while anchored to an https:// layer. The session layer is
-    # always a local anonymous layer regardless of what the root layer is,
-    # so switching the edit target there sidesteps the resolver mismatch
-    # entirely; harmless in the non-IRA fallback path too, where the root
-    # layer is already local anonymous.
-    stage.SetEditTarget(stage.GetSessionLayer())
-    robot = stage.DefinePrim(ROBOT_PRIM, "Xform")
-    robot.GetReferences().AddReference(str(G1_USD))
-    xform = UsdGeom.Xformable(robot)
-    translate = next((op for op in xform.GetOrderedXformOps() if "translate" in op.GetOpName()), None)
-    if translate is None:
-        translate = xform.AddTranslateOp()
-    translate.Set(Gf.Vec3d(0.0, 0.0, 0.8))
-
-
 def main() -> None:
     enable_extensions()
     # After enable_extensions(): Isaac Sim 6.1.0 moved isaacsim.core.api to
@@ -409,11 +372,23 @@ def main() -> None:
         print(f"[WH] carter cameras  : {stripped} deactivated (keep with --keep-carter-cameras)")
 
     # G1 always goes on top, regardless of which path built the environment.
-    spawn_g1(stage)
-    # A few frames of margin for the reference's composition to settle before
-    # anything queries child prims (Articulation's pelvis lookup below).
-    for _ in range(10):
-        simulation_app.update()
+    # load_g1 owns the reference + session-layer edit-target dance (rationale
+    # in its docstring), spawns every sensor prim (each ON by default) and
+    # wires the ROS2 graphs. create_articulation=False: pelvis gets wrapped
+    # AFTER sim.reset() below, the order this script was verified with.
+    labels = {ROBOT_PRIM: "robot"}
+    if not ira_ok:
+        labels.update({f"/World/targets/pedestrian_{i}": "pedestrian" for i in range(len(PEDESTRIANS))})
+    g1 = load_g1(
+        prim_path=ROBOT_PRIM,
+        usd_path=G1_USD,
+        camera=not args_cli.no_camera,
+        ros2=ENABLE_ROS2,
+        lidar_config_dir=REPO / args_cli.config_dir,
+        lidar_num_prims=args_cli.num_prims,
+        semantics=labels if (not args_cli.no_camera and ENABLE_ROS2) else None,
+        create_articulation=False,
+    )
     pelvis_prim = stage.GetPrimAtPath(f"{ROBOT_PRIM}/pelvis")
     print(f"[WH] G1 prim valid   : {stage.GetPrimAtPath(ROBOT_PRIM).IsValid()}  pelvis valid: {pelvis_prim.IsValid()}")
 
@@ -494,70 +469,16 @@ def main() -> None:
                 )
                 print("[WH] WBC bridge      : loaded (decoupled_wbc Balance/Walk, gains overridden)")
 
-    # Mount ON the mid360_link prim, which already carries the URDF's
-    # torso->sensor pose (translation + 180deg roll). The sensor therefore uses
-    # an identity local transform and its returns come out in the exact frame
-    # PublishTransformTree emits as `mid360_link`, so the published frame_id and
-    # the point origin are the same prim. Mounting on torso_link with a
-    # hand-authored quat put the points in a *different* frame than the one they
-    # were published in, applying the roll twice and dropping the whole cloud
-    # below the ground (fixed 2026-08-11 - see rtx_lidar.py MID360_POS note).
-    mount = f"{ROBOT_PRIM}/mid360_link"
-    if not omni.usd.get_context().get_stage().GetPrimAtPath(mount).IsValid():
-        raise SystemExit(f"[WH] mount prim {mount} missing from the USD")
-
-    prim_paths = spawn_mid360(
-        mount,
-        config_dir=REPO / args_cli.config_dir,
-        # +3cm WORLD-Z clearance (local -z = world-UP: mid360_link is rolled
-        # 180 deg). Origin buried in the G1 head mesh self-intersects every
-        # ray -> GMO buffer never forms (0 points + "GMO magic number" spam).
-        # 2026-08-25 sweep: dz=-1 upper band only, +3 missing bottom 6 deg,
-        # +5 FULL -7.3..+52.3 cone at 442k pts/render, +7 identical -> ran
-        # +5cm, but run7/run8 still threw "Invalid magic number" warnings, so
-        # per user 2026-09-22 drop 2cm to +3cm: GMO invalid-magic = origin
-        # inside a mesh, lowering ~2cm clears it. Trade-off: bottom ~6 deg of
-        # the cone clips head/body at +3cm. NOTE: rays originate 3cm above
-        # the mid360_link origin while the published frame_id stays
-        # mid360_link - negligible for detection; update the URDF mid360_joint
-        # if exact frame-origin parity ever matters.
-        translation=(0.0, 0.0, -0.03),  # local -z = world-UP -> +3cm world-up
-        # torso_link, so the link frame has +z pointing world-down (dome faces
-        # scene). The OmniLidar child prims must carry the same 180° roll so
-        # their emitter elevation angles are authored in a frame that matches
-        # the physical mounting - without this, the prim's +z = link's +z =
-        # world-down, but the engine interprets elevation +θ as rays above the
-        # prim's +z, which points into the floor rather than the scene.
-        # MID360_QUAT_WXYZ = (cos(π/2), sin(π/2), 0, 0) = 180° roll about X.
-        orientation=MID360_QUAT_WXYZ,
-    )
-    # Debug: print actual world position of the first sensor prim
-    if prim_paths:
-        from pxr import UsdGeom as _UsdGeom
-        _stage = omni.usd.get_context().get_stage()
-        _sp = _stage.GetPrimAtPath(prim_paths[0])
-        if _sp.IsValid():
-            _xf = _UsdGeom.Xformable(_sp)
-            _wm = _xf.ComputeLocalToWorldTransform(0.0)
-            _wp = _wm.ExtractTranslation()
-            print(f"[WH] sensor world pos: ({_wp[0]:.4f}, {_wp[1]:.4f}, {_wp[2]:.4f})")
-    if args_cli.num_prims and args_cli.num_prims < len(prim_paths):
-        prim_paths = prim_paths[: args_cli.num_prims]
-    print(f"[WH] lidar prims     : {len(prim_paths)}")
-
-
     mount_height = 0.8 + MID360_POS[2]
     print(f"[WH] mount height    : {mount_height:.2f} m")
     print(f"[WH] blind radius    : {blind_radius(mount_height):.2f} m")
 
-    publisher = None
-    rgbd_publisher = None
     cmd_vel_graph_path = None
     if ENABLE_ROS2:
         # NOT attach_ros2_publishers() here: that OG-graph path's
         # ROS2RtxLidarHelper advertises /livox/mid360/points but never
         # actually emits on this Isaac Sim build (see rtx_publisher.py's
-        # docstring - RtxLidarPublisher below is what really publishes it).
+        # docstring - load_g1()/g1_robot.py creates RtxLidarPublisher instead).
         # Calling it anyway was pure waste: 4 extra IsaacCreateRenderProduct
         # nodes/render-products for a graph whose output nothing reads,
         # competing for GPU memory with the 4 render products
@@ -567,9 +488,6 @@ def main() -> None:
         # (AnnotatorRegistryError: "not attached to any render products",
         # consistent with Replicator evicting a render product under
         # memory pressure on an 8 GB GPU).
-        state_graph = attach_robot_state_publishers(ROBOT_PRIM)
-        print(f"[WH] state graph     : {state_graph}  (/tf, /g1/joint_states, /clock)")
-
         if ira_ok:
             import g1_sim.ira_actors as ira_actors
 
@@ -591,47 +509,10 @@ def main() -> None:
                 carter_imu_graphs = ira_actors.attach_carter_imu_publishers(stage, carter_prims)
                 print(f"[WH] carter imus     : {len(carter_imu_graphs)}/{len(carter_prims)} found -> /carter_N/imu")
 
-        imu_prim = spawn_imu_sensor(f"{ROBOT_PRIM}/torso_link/imu_in_torso")
-        imu_graph = attach_imu_publisher(imu_prim)
-        print(f"[WH] imu graph       : {imu_graph}  (/g1/imu, prim={imu_prim})")
-
         if wbc_bridge is not None:
             cmd_vel_graph_path = attach_cmd_vel_subscriber()
             print(f"[WH] cmd_vel graph   : {cmd_vel_graph_path}  (/g1/cmd_vel)")
 
-        if not args_cli.no_camera:
-            camera_prim = spawn_camera(f"{ROBOT_PRIM}/torso_link")
-            cam_graph = attach_camera_publishers(camera_prim)
-            print(f"[WH] camera graph    : {cam_graph}")
-            print("[WH] camera topics   : /g1/camera/{rgb,depth,semantic,camera_info}")
-
-            labels = {ROBOT_PRIM: "robot"}
-            if not ira_ok:
-                labels.update({f"/World/targets/pedestrian_{i}": "pedestrian" for i in range(len(PEDESTRIANS))})
-            print(f"[WH] semantics       : {apply_semantics(labels)} prims labelled")
-
-        import rclpy
-
-        from g1_sim.rtx_publisher import RtxLidarPublisher
-
-        if not rclpy.ok():  # external-WBC mode already initialised it
-            rclpy.init()
-        publisher = RtxLidarPublisher(
-            prim_paths, topic="/livox/mid360/points", publish_rate=10.0,
-            # Verification pass 2026-08-11: publish the full accumulated
-            # sweep instead of the real-device-matching 20k cap, so RViz
-            # shows everything the non-repetitive pattern actually
-            # collected per window. Real-device-rate subsampling can be
-            # restored once the coverage itself is confirmed correct.
-            max_points=200_000,
-        )
-        print(f"[WH] publisher       : rclpy (annotator, raw per-prim) -> {publisher.topics}")
-
-        if not args_cli.no_camera:
-            from g1_sim.rgbd_publisher import RgbdPointCloudPublisher
-
-            rgbd_publisher = RgbdPointCloudPublisher(camera_prim, frame_id=OPTICAL_FRAME)
-            print(f"[WH] rgbd publisher  : /g1/camera/depth/color/points (frame={OPTICAL_FRAME})")
     else:
         print("[WH] ROS2 disabled")
 
@@ -710,19 +591,12 @@ def main() -> None:
                         f"updates={wbc_updates}  pelvis_z={robot_articulation.get_world_poses()[0][0][2]:.3f}"
                     )
 
-            if publisher is not None:
-                publisher.accumulate()
-                sent = publisher.publish(sim.current_time)
-                if sent:
-                    scans += 1
-                    last_points = sent
-                    if scans % 10 == 0:
-                        print(f"[WH] lidar per-prim diagnostics (scan {scans}, published {sent} pts):")
-                        print(publisher.diagnostics_str())
-                publisher.spin_once()
-
-            if rgbd_publisher is not None:
-                rgbd_publisher.publish(sim.current_time)
+            sent = g1.step(sim.current_time)
+            if sent:
+                scans += 1
+                last_points = sent
+                if scans % 10 == 0:
+                    print(f"[WH] lidar          : scan {scans}, published {sent} pts")
 
             if step % 100 == 0:
                 print(f"[WH] step {step:>6}  scans {scans}  points {last_points}")
@@ -731,11 +605,12 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\n[WH] interrupted")
     finally:
-        if publisher is not None:
+        if g1 is not None:
             import rclpy
 
-            publisher.destroy()
-            rclpy.shutdown()
+            g1.destroy()
+            if rclpy.ok():
+                rclpy.shutdown()
 
 
 if __name__ == "__main__":
