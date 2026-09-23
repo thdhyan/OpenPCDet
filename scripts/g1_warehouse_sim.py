@@ -237,6 +237,7 @@ import omni.timeline
 import omni.usd
 from pxr import Gf, UsdGeom, UsdPhysics, Usd
 
+from g1_sim.arm_override import ArmTargetSubscriber
 from g1_sim.g1_robot import load_g1
 from g1_sim.rtx_camera import attach_cmd_vel_subscriber
 from g1_sim.rtx_lidar import MID360_POS, blind_radius
@@ -474,6 +475,7 @@ def main() -> None:
     print(f"[WH] blind radius    : {blind_radius(mount_height):.2f} m")
 
     cmd_vel_graph_path = None
+    arm_sub = None
     if ENABLE_ROS2:
         # NOT attach_ros2_publishers() here: that OG-graph path's
         # ROS2RtxLidarHelper advertises /livox/mid360/points but never
@@ -512,6 +514,11 @@ def main() -> None:
         if wbc_bridge is not None:
             cmd_vel_graph_path = attach_cmd_vel_subscriber()
             print(f"[WH] cmd_vel graph   : {cmd_vel_graph_path}  (/g1/cmd_vel)")
+
+        import rclpy
+
+        arm_sub = ArmTargetSubscriber(rclpy.create_node("g1_arm_override"))
+        print("[WH] arm override    : /g1/arm_cmd -> ARM_JOINTS (external, hold-last)")
 
     else:
         print("[WH] ROS2 disabled")
@@ -590,6 +597,16 @@ def main() -> None:
                         f"[WH] wbc cmd=({cmd_vx:.2f},{cmd_vy:.2f},{cmd_wz:.2f})  "
                         f"updates={wbc_updates}  pelvis_z={robot_articulation.get_world_poses()[0][0][2]:.3f}"
                     )
+
+            if arm_sub is not None:
+                arm_sub.spin_once()
+                arm_tgt = arm_sub.get_targets()
+                if arm_tgt is not None:
+                    robot_articulation.set_joint_position_targets(
+                        arm_tgt[None, :], joint_names=ARM_JOINTS
+                    )
+                    if arm_sub.stats[0] == 1:
+                        print("[WH] arm override    : EXTERNAL arm targets active (WBC legs/waist unaffected)")
 
             sent = g1.step(sim.current_time)
             if sent:
