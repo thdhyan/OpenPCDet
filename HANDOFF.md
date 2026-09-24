@@ -139,6 +139,8 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 - The first UnifoLM GPU load was stopped after the VLM shards loaded because
   Spark's GPU was occupied by another active Ollama `qwen3.6:27b` process. No
   UnifoLM model error was observed; retry the load after that workload exits.
+- A fresh lazy UnifoLM listener is running at `:8767`
+  (`~/unifolm_ws_server.pid`); it has not loaded weights.
 - `scripts/unifolm_ws_server.py` now provides a lazy, unloadable EEF23 adapter.
   It requires an explicit 23-D EEF/base state and intentionally does not guess
   EEF poses from joint angles.
