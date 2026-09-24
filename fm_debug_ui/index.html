@@ -103,6 +103,11 @@
         <p>World model — lightweight video prediction</p>
         <span class="badge cosmos">VIDEO MODEL</span>
       </div>
+      <div class="model-card" data-model="unifolm-vla" onclick="selectModel('unifolm-vla')">
+        <h3>UnifoLM-VLA</h3>
+        <p>Unitree G1 policy — EEF pose and base action chunks</p>
+        <span class="badge gr00t">G1 ACTION POLICY</span>
+      </div>
     </div>
 
     <div class="section">
@@ -190,6 +195,10 @@
       <div class="section">
         <h2>Joint State</h2>
         <div class="json-view" id="joint-state-view">Waiting for joint states...</div>
+      </div>
+      <div class="section">
+        <h2>TF Tree (including Dex3 frames)</h2>
+        <div class="json-view" id="tf-view" style="max-height:280px">Waiting for /tf and /tf_static...</div>
       </div>
     </div>
 
@@ -301,7 +310,8 @@
     currentTab: 'input',
     trajectory: [],
     trajectoryStep: 0,
-    previewTimer: null
+    previewTimer: null,
+    tf: {dynamic: [], static: []}
   };
 
   // ===== SCHEMA DEFINITIONS =====
@@ -367,9 +377,10 @@
 
   // ===== MODEL INFO =====
   const MODELS = {
-    'gr00t': { name: 'GR00T N1.7-3B', type: 'action', endpoint: 'ws://localhost:8765' },
-    'cosmos-edge': { name: 'Cosmos3-Edge', type: 'video', endpoint: 'ws://localhost:8770' },
-    'cosmos-nano': { name: 'Cosmos3-Nano', type: 'video', endpoint: 'ws://localhost:8771' }
+    'gr00t': { name: 'GR00T N1.7-3B', type: 'action', endpoint: 'ws://localhost:8765', schema: 'action-upper-body' },
+    'cosmos-edge': { name: 'Cosmos3-Edge', type: 'video', endpoint: 'ws://localhost:8770', schema: 'next-video' },
+    'cosmos-nano': { name: 'Cosmos3-Nano', type: 'video', endpoint: 'ws://localhost:8771', schema: 'next-video' },
+    'unifolm-vla': { name: 'UnifoLM-VLA', type: 'action', endpoint: 'ws://localhost:8767', schema: 'eef-se3' }
   };
 
   // ===== UI FUNCTIONS =====
@@ -381,11 +392,12 @@
     // Auto-set output schema based on model type
     const schemaSelect = document.getElementById('output-schema');
     if (MODELS[model].type === 'action') {
-      schemaSelect.value = 'action-upper-body';
+      schemaSelect.value = MODELS[model].schema;
     } else {
       schemaSelect.value = 'next-video';
     }
     state.outputSchema = schemaSelect.value;
+    document.getElementById('ws-url').value = `ws://localhost:8080/ws/model?model=${model}`;
     updateSchemaPreview();
     log(`Model changed to ${MODELS[model].name}`, 'info');
   }
@@ -523,7 +535,44 @@
       if (msg.type === 'joint_states' || msg.joint_states) {
         document.getElementById('joint-state-view').textContent = JSON.stringify(msg.joint_states || msg, null, 2);
       }
+      if (msg.tf || msg.tf_static) {
+        if (msg.tf) state.tf.dynamic = msg.tf;
+        if (msg.tf_static) state.tf.static = msg.tf_static;
+        renderTfTree();
+      }
     } catch (e) {}
+  }
+
+  function renderTfTree() {
+    const rows = [
+      ...state.tf.static.map(item => ({...item, source: 'static'})),
+      ...state.tf.dynamic.map(item => ({...item, source: 'dynamic'})),
+    ];
+    if (!rows.length) {
+      document.getElementById('tf-view').textContent = 'Waiting for /tf and /tf_static...';
+      return;
+    }
+    const children = new Map();
+    rows.forEach(item => {
+      if (!children.has(item.parent)) children.set(item.parent, []);
+      children.get(item.parent).push(item);
+    });
+    const lines = [];
+    const visited = new Set();
+    const walk = (parent, depth) => {
+      for (const item of children.get(parent) || []) {
+        if (visited.has(item.child)) continue;
+        visited.add(item.child);
+        const dex3 = item.child.includes('hand_') || item.child.includes('thumb_') || item.child.includes('index_') || item.child.includes('middle_');
+        const color = dex3 ? '#ce93d8' : (item.source === 'static' ? '#a5d6a7' : '#90caf9');
+        lines.push(`${'  '.repeat(depth)}↳ ${item.parent} → ${item.child} <span style="color:${color}">[${item.source}${dex3 ? ' · Dex3' : ''}]</span>`);
+        walk(item.child, depth + 1);
+      }
+    };
+    const roots = [...new Set(rows.map(item => item.parent))].filter(parent => !rows.some(item => item.child === parent));
+    roots.forEach(root => walk(root, 0));
+    rows.forEach(item => { if (!visited.has(item.child)) lines.push(`↳ ${item.parent} → ${item.child} [${item.source}]`); });
+    document.getElementById('tf-view').innerHTML = lines.join('<br>');
   }
 
   // ===== VISUALIZATION =====
@@ -688,6 +737,8 @@
     state.outputHistory = [];
     state.trajectory = [];
     state.trajectoryStep = 0;
+    state.tf = {dynamic: [], static: []};
+    renderTfTree();
     if (state.previewTimer !== null) clearInterval(state.previewTimer);
     state.previewTimer = null;
     document.getElementById('trajectory-slider').value = '0';

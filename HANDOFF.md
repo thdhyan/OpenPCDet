@@ -1,7 +1,7 @@
 # HANDOFF — G1 Foundation Model Testing + TF/Camera/Lidar Alignment
 
-**Status**: PAUSED — UI/URDF preview works; real GR00T N1.7 blocked; Docker GR00T adapter pending; TF/Camera depth BROKEN
-**Last Updated**: 2026-09-24/25
+**Status**: CHECKPOINT — UI server verified on Spark02; Dex3/TF bridge and UI code added; GR00T N1.7 access test running; full Docker stack pending
+**Last Updated**: 2026-09-23
 **Repo**: `/home/thakk100/Projects/thesis/G1_sim`
 
 ---
@@ -14,57 +14,52 @@
 
 | Service | Target | Reason |
 |---|---|---|
-| Isaac Sim + RGB/depth/TF/joint bridge | **`dl`** | 4× RTX 6000 Ada, 503 GiB RAM, Docker/NCCL available |
-| GR00T G1 inference server | **`dl`** | Same GPU host as sim; avoids cross-machine DDS and large image/video transport |
-| Foundation Model Debug UI | **`dl`** with SSH/VPN port-forward if needed | Keeps proxy, model, and simulator on one host |
-| Spark02 | **Not the inference target** | Current `~/venvs/gr00t` has CPU-only Torch; useful only as a temporary UI/static host |
+| Isaac Sim + RGB/depth/TF/joint bridge | **`dl`** | x86 Docker/Isaac image, 4× RTX 6000 Ada, 503 GiB RAM |
+| GR00T N1.7 / UnifoLM GPU servers | **`spark02`** | GB10 GPU; venv now has CUDA-enabled Torch |
+| Foundation Model Debug UI | **`spark02`** with SSH/VPN port-forward if needed | Keeps model processes and UI together |
 | Spark04 | **Do not use for model storage** | Less than 500 GB free, violates fleet storage rule |
 
-Use only port `8080` from the laptop through an SSH tunnel:
+Use port `8080` from the laptop through an SSH tunnel to the UI host:
 
 ```bash
-ssh -N -L 8080:127.0.0.1:8080 dl
+ssh -N -L 8080:127.0.0.1:8080 aim_spark02
 # open http://localhost:8080
 ```
 
+The direct Spark02 URL is `http://10.131.37.135:8080/?demo=1&view=3d-view`.
 The UI server proxies internally to model `:8765` and simulator bridge `:8766`.
 
 ### Model decision
 
-1. **GR00T N1.7 is blocked and must not be the default.**
+1. **Keep GR00T N1.7 as the active model target.**
    - `GR00T-N1.7-3B` hard-codes `nvidia/Cosmos-Reason2-2B` as its VLM backbone.
-   - It fails at load time without gated Hugging Face access.
-   - Do not replace that backbone with Cosmos3-Edge/Nano; their architecture and hidden-state contract are incompatible.
-   - The Spark02 GR00T server was stopped after confirming this failure.
+   - That repository is gated; the local Hugging Face token was forwarded to
+     Spark02 through SSH stdin and authenticated as `Thakk100`.
+   - A GPU load verification is running. Do not substitute Cosmos3-Edge/Nano or
+     silently switch to N1.5 if the load fails.
 
-2. **Best direct-G1 candidate: `nvidia/g1_locomanip_finetune`.**
-   - GR00T N1.5 G1 locomanipulation fine-tune, not Cosmos Reason2-dependent.
-   - Already downloaded on `dl`:
-     - model: `~/foundation_models/g1_locomanip_finetune/model`
-     - code: `~/Isaac-GR00T-n1d5` (`4af2b62`)
-     - data config: `~/Projects/IsaacLab/scripts/imitation_learning/locomanipulation_sdg/gr00t/data_config.py`
-   - It outputs 32-D chunks: left/right hand poses, finger joints, base velocity, and base height.
-   - It needs an old N1.5 adapter plus an explicit EEF-to-joint IK step before WBC dispatch.
+2. **UnifoLM-VLA is the secondary action model.**
+   - The Unitree checkpoint download is running on Spark02 at
+     `~/foundation_models/UnifoLM-VLA-Base` (about 19 GB).
+   - Its WebSocket adapter and full dependency validation are still pending.
+   - Keep Cosmos models optional and unloaded by default.
 
-3. **Other candidates assessed:**
-   - GR00T N1.6: open Eagle backbone, but base processor is not a Unitree-G1 embodiment and CPU/ARM Spark venv cannot run it. Not a drop-in replacement.
-   - OpenPI/π0/π0.5: open code/checkpoints, but no native Unitree G1 checkpoint; requires G1 fine-tuning.
-   - SmolVLA: lightweight/open, but no G1-native policy checkpoint; requires retargeting/fine-tuning.
-   - UnifoLM-VLA: G1 datasets and G1 action configuration exist, but requires a separate 7B VLM and G1 fine-tuning.
+3. **The old N1.5 locomanipulation checkout is historical fallback material only.**
+   - Do not use it as the default or claim it is a drop-in N1.7 replacement.
 
-**Conclusion:** no alternative meets “G1 + open weights + no substantial training” today. Keep the G1 locomanip fine-tune as the next server target; do not ship a misleading N1.7 fallback.
+### Docker services still to finish
 
-### Docker services still to finish on `dl`
-
-The repository contains the compose scaffold, but the complete GR00T service is **not yet running**. The UI/URDF preview is working; the real G1 model server remains the next implementation task.
-
-Planned services:
+The repository contains the compose scaffold, but the complete Isaac Sim +
+GR00T/UnifoLM stack is **not yet running**. Keep the split deployment:
 
 ```text
 dl
-├── isaac-sim       :8766 bridge source, GPU
-├── gr00t           :8765, G1 N1.5 locomanip model, GPU
-├── sim-ws          :8766, RGB/depth/joints/TF bridge
+└── isaac-sim       :8766 bridge source, GPU
+
+aim_spark02
+├── gr00t           :8765, GR00T N1.7, GPU
+├── unifolm         :8767, UnifoLM-VLA, GPU
+├── sim-ws client   ROS2 -> WebSocket -> Spark02
 └── fm-ui           :8080, browser UI and WS proxy
 ```
 
@@ -75,17 +70,26 @@ ssh dl
 df -h /
 nvidia-smi
 docker ps
+
+ssh aim_spark02
+df -h /
+free -h
+nvidia-smi
 ```
 
 ### Simulator stream contract
 
-`sim_ws_bridge.py` currently streams:
+`sim_ws_bridge.py` now streams:
 
 - `/g1/camera/rgb`
 - `/g1/camera/depth`
 - `/g1/joint_states`
+- `/tf`
+- `/tf_static`
 
-**Still missing:** subscriptions/serialization for `/tf` and `/tf_static`. Add those before claiming the simulator input is complete. The UI already has a connection path, but no TF visualization panel yet.
+Joint states are the primary model state. TF is included as supplementary
+state and is displayed in the UI's Dex3-aware TF tree. The new TF path still
+needs a live ROS 2 run test.
 
 The warehouse scene contains the robot and the locomanip props added by `add_locomanip_props()`:
 
@@ -98,22 +102,58 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 
 ### Current Git/UI state
 
-- UI/URDF implementation pushed in commit `06e96bc`.
+- UI/URDF implementation is in commits `06e96bc` and `9a40ebb`.
 - GitHub branch: `isaacsim6-rtx-emitter` on configured `origin`.
-- Spark02 clone: `~/Projects/fm-debug-ui` at `06e96bc`.
+- Spark02 clone: `~/Projects/fm-debug-ui`; update it after this checkpoint is
+  pushed.
 - Verified offline URDF preview URL:
   `http://10.131.37.135:8080/?demo=1&view=3d-view`
-- The Spark02 UI process was stopped before pause; restart it only if a quick static preview is needed.
-- No Docker container has been started yet for the real Isaac Sim + GR00T stack.
+- The Spark02 UI process is running and the browser smoke test passed.
+- No Docker container has been started yet for the real Isaac Sim + model stack.
+
+### New checkpoint — server, GPU venv, HF access, Dex3/TF work
+
+- Spark02 UI is running again at `http://10.131.37.135:8080`; Playwright/Chrome
+  smoke check passed. The offline URDF view remains:
+  `http://10.131.37.135:8080/?demo=1&view=3d-view`.
+- Spark02 `~/venvs/gr00t` now has `torch 2.14.0+cu130`,
+  `torchvision 0.29.0+cu130`, CUDA 13.0, and `torch.cuda.is_available() == True`.
+- The current local Hugging Face credential was forwarded to Spark02 through
+  SSH stdin only; `hf auth whoami` returned `Thakk100`. The token is not stored
+  in the repository, Docker files, or command arguments.
+- GR00T N1.7 load verification was started with the forwarded token and the
+  GPU venv. Check its process/log before relying on inference; do not start a
+  second copy while it is running.
+- UnifoLM-VLA-Base download was started on Spark02 at
+  `~/foundation_models/UnifoLM-VLA-Base` (approximately 19 GB). Its code/adapter
+  is not yet wired into the UI service.
+- The Dex3-capable robot USD and contact/TF changes are staged for this
+  checkpoint. `g1_robot.py` now defaults to
+  `assets/robot/g1_29_dex3/g1_29dof_with_dex3_base_fix.usd`, publishes 43
+  joints (29 body + 14 Dex3), and accepts `/g1/hand_cmd`.
+- `sim_ws_bridge.py` now serializes `/tf` and `/tf_static`; the UI has a TF tree
+  panel that marks Dex3 frames. This still needs a live ROS 2 run test.
+- The model selector now includes UnifoLM-VLA, but no UnifoLM inference process
+  is active yet. GR00T remains the only implemented model server.
+- Model loading is lazy for GR00T (weights load on first inference), but a
+  multi-process hot-unload manager is not implemented yet. Do not claim all
+  models are hot-loadable until the manager exists.
+
+The older sections below preserve prior experiments; where they conflict with
+this checkpoint, use the checkpoint and resume order above.
+
+---
 
 ### Resume order
 
+0. Check the one running Spark02 GR00T load test and the UnifoLM download; do not duplicate either.
 1. Fix `/tf` and `/tf_static` streaming in `scripts/sim_ws_bridge.py`.
 2. Add TF data to the UI input panel.
-3. Write the N1.5 G1 locomanip WebSocket adapter using the downloaded checkpoint.
-4. Add the EEF trajectory preview and explicit IK conversion before any `/g1/arm_cmd` dispatch.
-5. Add a `gr00t` service to `docker/docker-compose-fm.yml` using `dl` GPU Docker.
-6. Start Isaac Sim + bridge + GR00T + UI on `dl` and verify all four ports.
+3. Write the UnifoLM-VLA WebSocket adapter using the Spark02 checkpoint.
+4. Add a multi-process model manager with explicit load/unload and idle eviction.
+5. Add `gr00t` and `unifolm` services to the Docker Compose stack.
+6. Start Isaac Sim + bridge + GR00T/UnifoLM + UI only after the GPU/container environment is verified.
+7. Keep WBC on legs/waist and route only the selected arm/hand trajectory after explicit preview approval.
 
 ---
 
@@ -121,8 +161,8 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 
 | Workstream | Status | Priority |
 |------------|--------|----------|
-| **A. TF/Camera/Lidar Alignment** | ❌ Camera static TF missing; depth points below floor | **HIGH — fix first** |
-| **B. Foundation Model Testing (GR00T/Cosmos)** | ⏸️ Paused; UI/URDF preview works, N1.7 blocked, N1.5 G1 adapter pending | MEDIUM — resume after A |
+| **A. TF/Camera/Lidar Alignment** | 🟡 Dex3/TF code added; live ROS 2 validation pending | **HIGH** |
+| **B. Foundation Model Testing (GR00T/UnifoLM/Cosmos)** | 🟡 N1.7 GPU access test running; UnifoLM download running; full services pending | **HIGH** |
 
 ---
 
@@ -137,12 +177,16 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 | **Static TF** `d435_link → d435_color_optical_frame` | ✅ Publishes | Quaternion (-0.5, 0.5, -0.5, 0.5) — REP-103 |
 | **Lidar spawn** | ✅ Identity | `spawn_mid360` default = identity (no double 180° roll) |
 
-### ❌ BROKEN — IMMEDIATE FIX NEEDED
+### ⚠️ Validation still required
 
-| Issue | Symptom | Root Cause |
-|-------|---------|------------|
-| **Camera static TF missing** | `d435_camera` frame NOT in `/tf` or `/tf_static` | `ROS2PublishRawTransformTree` (CameraTF) added to OmniGraph but not emitting |
-| **Depth points below floor** | `/g1/camera/depth/points` → world Z ∈ [-2.49, 4.84] | Frame_id = `d435_camera` but TF missing; USD camera local frame ≠ d435_link |
+The Dex3/TF implementation is now in the repository, but the following
+live checks remain:
+
+- Start Isaac Sim and verify `/tf` and `/tf_static` reach the WebSocket bridge.
+- Confirm the TF panel shows the Dex3 palm/fingertip frames.
+- Re-run the depth/TF alignment check after the Dex3 USD is loaded.
+- Do not claim the full simulator input contract is validated until these
+  checks pass.
 
 ### KEY FILES (TF/Camera)
 
@@ -200,7 +244,7 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 |-------|--------|----------|-------|
 | **GR00T-N1.7-3B** | ✅ Downloaded (6.5 GB) | `~/foundation_models/GR00T-N1.7-3B` on spark02 | `REAL_G1` pretrain tag |
 | **Cosmos3-Edge** | ✅ Downloaded (8.6 GB) | `~/foundation_models/Cosmos3-Edge` on spark02 | Video/world model |
-| **Cosmos-Reason2-2B** | ❌ Failed (gated) | — | Token lacks HF access |
+| **Cosmos-Reason2-2B** | 🟡 Access check in progress | Hugging Face cache on Spark02 | `HF_TOKEN` authenticated; do not assume model load until the test completes |
 | **Qwen3.8-Flash-Next** | 🟡 In progress | spark01, llama.cpp branch `qwen4exp` | Separate OpenAI-compatible server on :8001 |
 
 ### GR00T Modality Config (REAL_G1 pretrain)

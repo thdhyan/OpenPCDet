@@ -49,6 +49,8 @@ class SimBridge:
         self.latest_rgb: str | None = None
         self.latest_depth: str | None = None
         self.latest_joints: dict | None = None
+        self.latest_tf: list[dict] = []
+        self.latest_tf_static: list[dict] = []
         self._pending_arm_command: tuple[list[str], list[float]] | None = None
         self._running = False
 
@@ -126,6 +128,10 @@ class SimBridge:
             msg["type"] = "joint_states"
         elif self.latest_rgb or self.latest_depth:
             msg["type"] = "camera"
+        if self.latest_tf:
+            msg["tf"] = self.latest_tf
+        if self.latest_tf_static:
+            msg["tf_static"] = self.latest_tf_static
 
         if len(msg) <= 2:
             return
@@ -149,6 +155,12 @@ class SimBridge:
     def update_joints(self, names: list, positions: list):
         self.latest_joints = {"name": names, "position": positions, "t": time.time()}
 
+    def update_tf(self, transforms: list[dict], static: bool = False) -> None:
+        if static:
+            self.latest_tf_static = transforms
+        else:
+            self.latest_tf = transforms
+
     def take_pending_arm_command(self) -> tuple[list[str], list[float]] | None:
         command, self._pending_arm_command = self._pending_arm_command, None
         return command
@@ -159,8 +171,9 @@ async def ros_bridge_task(bridge: SimBridge):
     try:
         import rclpy
         from rclpy.node import Node
-        from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
+        from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
         from sensor_msgs.msg import Image, JointState
+        from tf2_msgs.msg import TFMessage
     except ImportError:
         log.warning("ROS2 not available — running in test mode (no data)")
         while True:
@@ -230,9 +243,41 @@ async def ros_bridge_task(bridge: SimBridge):
     def on_joints(msg):
         bridge.update_joints(list(msg.name), list(msg.position))
 
+    def serialize_tf(msg):
+        transforms = []
+        for transform in msg.transforms:
+            translation = transform.transform.translation
+            rotation = transform.transform.rotation
+            transforms.append({
+                "parent": transform.header.frame_id,
+                "child": transform.child_frame_id,
+                "translation": [translation.x, translation.y, translation.z],
+                "rotation": [rotation.x, rotation.y, rotation.z, rotation.w],
+                "stamp": [
+                    transform.header.stamp.sec,
+                    transform.header.stamp.nanosec,
+                ],
+            })
+        return transforms
+
+    def on_tf(msg):
+        bridge.update_tf(serialize_tf(msg), static=False)
+
+    def on_tf_static(msg):
+        bridge.update_tf(serialize_tf(msg), static=True)
+
+    qos_static = QoSProfile(
+        history=QoSHistoryPolicy.KEEP_LAST,
+        depth=100,
+        reliability=QoSReliabilityPolicy.RELIABLE,
+        durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+    )
+
     node.create_subscription(Image, "/g1/camera/rgb", on_rgb, qos)
     node.create_subscription(Image, "/g1/camera/depth", on_depth, qos)
     node.create_subscription(JointState, "/g1/joint_states", on_joints, qos)
+    node.create_subscription(TFMessage, "/tf", on_tf, qos)
+    node.create_subscription(TFMessage, "/tf_static", on_tf_static, qos_static)
     arm_publisher = node.create_publisher(JointState, "/g1/arm_cmd", qos)
 
     log.info("ROS2 subscriptions created — waiting for data")

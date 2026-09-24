@@ -112,6 +112,19 @@ The browser module imports Three.js and `urdf-loader` from jsDelivr. The
 simulator/model server does not need internet access, but the browser must be
 able to reach the CDN unless those two frontend packages are vendored later.
 
+The simulator bridge also forwards `/tf` and `/tf_static`; the UI marks Dex3
+hand frames separately in the TF tree. Joint states remain the primary model
+state and are sent alongside the TF snapshot.
+
+The model selector includes:
+
+- GR00T N1.7 joint-action preview
+- UnifoLM-VLA G1 EEF-action adapter
+- Cosmos3-Edge / Cosmos3-Nano video placeholders
+
+UnifoLM and Cosmos services are lazy/optional: selecting a model does not load
+weights until that model's inference service receives a request.
+
 The server also exposes `GET /api/models`, `GET /api/schema`,
 `GET /api/robot/g1-29dof`, `GET /assets/g1_29dof.urdf`, and `POST /api/ik`.
 

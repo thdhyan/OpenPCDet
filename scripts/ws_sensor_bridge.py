@@ -40,6 +40,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from sensor_msgs.msg import JointState, Image
+from tf2_msgs.msg import TFMessage
 
 # Re-use the arm-override message contract.
 from g1_sim.wbc_bridge import ARM_JOINTS
@@ -53,6 +54,7 @@ class WsBridgeNode(Node):
         super().__init__("g1_ws_bridge")
         self._last_rgb: Image | None = None
         self._last_joints: JointState | None = None
+        self._last_tf: TFMessage | None = None
         self._last_cmd: str | None = None  # text command, if any
 
         qos_sub = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST, depth=5,
@@ -61,6 +63,8 @@ class WsBridgeNode(Node):
             Image, "/g1/camera/rgb", self._on_rgb, qos_sub)
         self._joint_sub = self.create_subscription(
             JointState, "/g1/joint_states", self._on_joints, qos_sub)
+        self._tf_sub = self.create_subscription(
+            TFMessage, "/tf", self._on_tf, qos_sub)
 
         qos_pub = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST, depth=5,
                              reliability=QoSReliabilityPolicy.BEST_EFFORT)
@@ -73,6 +77,9 @@ class WsBridgeNode(Node):
 
     def _on_joints(self, msg: JointState) -> None:
         self._last_joints = msg
+
+    def _on_tf(self, msg: TFMessage) -> None:
+        self._last_tf = msg
 
     def take_observations(self):
         """Return a JPEG RGB snapshot, joint dictionary, and sim time."""
@@ -96,6 +103,27 @@ class WsBridgeNode(Node):
         jdict = None
         if j is not None:
             jdict = {"name": list(j.name), "position": list(j.position)}
+        if self._last_tf is not None:
+            jdict = jdict or {"name": [], "position": []}
+            jdict["tf"] = [
+                {
+                    "parent": transform.header.frame_id,
+                    "child": transform.child_frame_id,
+                    "translation": [
+                        transform.transform.translation.x,
+                        transform.transform.translation.y,
+                        transform.transform.translation.z,
+                    ],
+                    "rotation": [
+                        transform.transform.rotation.x,
+                        transform.transform.rotation.y,
+                        transform.transform.rotation.z,
+                        transform.transform.rotation.w,
+                    ],
+                }
+                for transform in self._last_tf.transforms
+            ]
+            self._last_tf = None
         return rgb_b64, jdict, t
 
     def publish_arm(self, names: list[str], positions: list[float], t: float) -> None:

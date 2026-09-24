@@ -60,6 +60,13 @@ MODELS = {
         "description": "World model — lightweight",
         "schemas": ["next-image", "next-video"],
     },
+    "unifolm-vla": {
+        "name": "UnifoLM-VLA",
+        "type": "action",
+        "ws_url": "ws://localhost:8767",
+        "description": "Unitree G1 policy — EEF pose and base action chunks",
+        "schemas": ["eef-se3", "action-upper-body"],
+    },
 }
 
 # ============================================================
