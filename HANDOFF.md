@@ -61,9 +61,10 @@ The UI server proxies internally to model `:8765` and simulator bridge `:8766`.
 The repository contains the compose scaffold. The CPU-only AgenticROS
 rosbridge is running on `dl` at `ws://127.0.0.1:9091`; its client-publish
 filter is read-only. The AgenticROS MCP image initializes and lists the
-read-only rosapi graph. The GPU Isaac Sim/CuVSLAM/NVBlox services are **not yet
-running** because all four `dl` GPUs are occupied; the pinned Isaac ROS 4.5
-image build is in progress. Keep the split deployment:
+read-only rosapi graph. The pinned Isaac ROS 4.5 image is built (59.4 GB);
+package, plugin, CUDA 13.0, TensorRT 10.13, NCCL 2.28.9, and launch-argument
+checks pass. The GPU Isaac Sim/CuVSLAM/NVBlox services are **not yet running**
+because all four `dl` GPUs are occupied. Keep the split deployment:
 
 ```text
 dl
@@ -161,8 +162,9 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
   joints (29 body + 14 Dex3), and accepts `/g1/hand_cmd`.
 - `sim_ws_bridge.py` now serializes `/tf` and `/tf_static`; the UI has a TF tree
   panel that marks Dex3 frames. This still needs a live ROS 2 run test.
-- The model selector now includes UnifoLM-VLA, but its inference process is not
-  active yet. GR00T is live; UnifoLM remains pending VLM/dependency validation.
+- The model selector includes UnifoLM-VLA; its GPU load/inference/unload test
+  is complete and the listener is currently unloaded. GR00T is likewise
+  available but unloaded between requests.
 - Model loading is lazy for GR00T and UnifoLM's adapter. Both WebSocket
   services accept explicit `{"type":"unload"}` and release weights without
   restarting their listeners; a cross-model supervisor and automatic idle
@@ -185,10 +187,10 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
   only to an explicitly attached MCP client and must stay behind the UI approval
   gate. Port 9090 is already occupied by a cockpit service on `dl`.
 - GPU services have not been started because all four `dl` GPUs are currently
-  occupied by unrelated workloads. Run the CPU-only rosbridge profile now;
-  start `sim`/`perception` only after selecting a free GPU. The first Isaac ROS
-  image build was stopped after apt resolved CUDA 13.2 packages under the old
-  4.6 configuration; the Dockerfile is now pinned to release 4.5/CUDA 13.0.
+  occupied by unrelated workloads. The CPU-only rosbridge profile is running;
+  start `sim`/`perception` only after selecting a free GPU. The Isaac ROS 4.5
+  image now builds successfully with CUDA 13.0/TensorRT 10.13/NCCL 2.28.9 pins;
+  runtime compatibility with Isaac Sim 6.0 remains the next gate.
 
 ---
 
@@ -197,8 +199,7 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 0. Do not launch a second model load while another process owns a GPU.
 1. UnifoLM EEF23 smoke inference is complete; keep the service unloaded until
    an explicit request arrives.
-2. Finish/validate the pinned Isaac ROS 4.5 image build on `dl`, then run static
-   package/library checks.
+2. Isaac ROS 4.5 image build and static package/library checks are complete.
 3. Start Isaac Sim + CuVSLAM/NVBlox only after selecting a free GPU; verify RGB,
    depth, 43 joints, `/tf`, and `/tf_static` together.
 4. Add a multi-process model manager with automatic idle eviction.
