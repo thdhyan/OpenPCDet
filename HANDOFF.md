@@ -1,6 +1,6 @@
 # HANDOFF — G1 Foundation Model Testing + TF/Camera/Lidar Alignment
 
-**Status**: CHECKPOINT — Workstream A (sensors/TF/Dex3) DONE and verified in sim (`9a40ebb`); UI server verified on Spark02; Spark02 GPU dependency repair and UnifoLM VLM download in progress; full Docker stack pending
+**Status**: CHECKPOINT — Workstream A (sensors/TF/Dex3) DONE and verified in sim (`9a40ebb`); UI server and lazy GR00T N1.7 GPU service verified on Spark02; UnifoLM VLM download/dependency validation in progress; full Docker stack pending
 **Last Updated**: 2026-09-24
 **Repo**: `/home/thakk100/Projects/thesis/G1_sim`
 
@@ -35,9 +35,11 @@ The UI server proxies internally to model `:8765` and simulator bridge `:8766`.
    - `GR00T-N1.7-3B` hard-codes `nvidia/Cosmos-Reason2-2B` as its VLM backbone.
    - That repository is gated; the local Hugging Face token was forwarded to
      Spark02 through SSH stdin and authenticated as `Thakk100`.
-   - A prior GPU load command was interrupted when the server restarted; no
-     GR00T process is active now. The Spark02 venv is being aligned to the
-     checkpoint's Torch 2.9/CUDA 13 stack before a fresh load test.
+   - GR00T N1.7 now loads on Spark02 GPU in ~12–15 seconds using
+     Torch 2.9.0+cu130; the service falls back to SDPA because the available
+     aarch64 FlashAttention wheel is CUDA-12-linked.
+   - The background WebSocket service listens on `:8765`; explicit `load`,
+     synthetic 43-joint inference, and 40-step preview output were verified.
 
 2. **UnifoLM-VLA is the secondary action model.**
    - The Unitree action checkpoint is present on Spark02 at
@@ -121,15 +123,14 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 - Spark02 UI is running again at `http://10.131.37.135:8080`; Playwright/Chrome
   smoke check passed. The offline URDF view remains:
   `http://10.131.37.135:8080/?demo=1&view=3d-view`.
-- Spark02 `~/venvs/gr00t` now has `torch 2.14.0+cu130`,
-  `torchvision 0.29.0+cu130`, CUDA 13.0, and `torch.cuda.is_available() == True`.
+- Spark02 `~/venvs/gr00t` now has `torch 2.9.0+cu130`,
+  `torchvision 0.24.0`, CUDA 13.0, and `torch.cuda.is_available() == True`.
 - The current local Hugging Face credential was forwarded to Spark02 through
   SSH stdin only; `hf auth whoami` returned `Thakk100`. The token is not stored
   in the repository, Docker files, or command arguments.
-- The prior GR00T N1.7 load command was interrupted by the server restart; no
-  GR00T process is active. Spark02 is being realigned to Torch 2.9.0+cu130 /
-  torchvision 0.24.0 / Triton 3.5, which matches the GR00T package and its
-  aarch64 wheels. Do not claim a successful model load yet.
+- GR00T N1.7 is live on Spark02 at `:8765`. The service loaded in ~12–15s,
+  fell back to SDPA because the available aarch64 FlashAttention wheel is
+  CUDA-12-linked, and returned a verified 40-step synthetic inference preview.
 - The UnifoLM-VLA action checkpoint is present on Spark02; its 16+ GB
   `UnifoLM-VLM-Base` companion download is still running.
 - `scripts/unifolm_ws_server.py` now provides a lazy, unloadable EEF23 adapter.
@@ -144,8 +145,8 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
   joints (29 body + 14 Dex3), and accepts `/g1/hand_cmd`.
 - `sim_ws_bridge.py` now serializes `/tf` and `/tf_static`; the UI has a TF tree
   panel that marks Dex3 frames. This still needs a live ROS 2 run test.
-- The model selector now includes UnifoLM-VLA, but no UnifoLM inference process
-  is active yet. GR00T remains the only implemented model server.
+- The model selector now includes UnifoLM-VLA, but its inference process is not
+  active yet. GR00T is live; UnifoLM remains pending VLM/dependency validation.
 - Model loading is lazy for GR00T and UnifoLM's adapter. Both WebSocket
   services accept explicit `{"type":"unload"}` and release weights without
   restarting their listeners; a cross-model supervisor and automatic idle
@@ -158,17 +159,14 @@ this checkpoint, use the checkpoint and resume order above.
 
 ### Resume order
 
-0. Let the Spark02 Torch repair and UnifoLM-VLM download finish; do not launch
+0. Let the UnifoLM-VLM download and its dependency install finish; do not launch
    duplicate installs or model processes.
-1. Verify `torch.cuda.is_available()` and run a clean GR00T N1.7 load test with
-   the forwarded HF token.
-2. Install/validate the official UnifoLM dependencies and run one EEF23 adapter
-   smoke request with an explicit 23-D state.
-3. Add a multi-process model manager with explicit load/unload and idle eviction.
-4. Add `gr00t` and `unifolm` services to the Docker Compose stack.
-5. Start Isaac Sim + bridge + GR00T/UnifoLM + UI only after the GPU/container
+1. Run one UnifoLM EEF23 adapter smoke request with an explicit 23-D state.
+2. Add a multi-process model manager with automatic idle eviction.
+3. Add `gr00t` and `unifolm` services to the Docker Compose stack.
+4. Start Isaac Sim + bridge + GR00T/UnifoLM + UI only after the GPU/container
    environment is verified.
-6. Keep WBC on legs/waist and route only joint-space arm/hand trajectories after
+5. Keep WBC on legs/waist and route only joint-space arm/hand trajectories after
    explicit preview approval. UnifoLM EEF output remains non-dispatching until
    a separately validated EEF-to-IK stage exists.
 
@@ -179,7 +177,7 @@ this checkpoint, use the checkpoint and resume order above.
 | Workstream | Status | Priority |
 |------------|--------|----------|
 | **A. TF/Camera/Lidar + Dex3** | ✅ Verified live (verify_sensor_tf 11/11, check_sensor_suite PASS, test_dex3_contacts PASS); next = TacSL (`docs/TACSL_PLAN.md`) | MEDIUM |
-| **B. Foundation Model Testing (GR00T/UnifoLM/Cosmos)** | 🟡 N1.7 GPU access test running; UnifoLM download running; full services pending | **HIGH** |
+| **B. Foundation Model Testing (GR00T/UnifoLM/Cosmos)** | 🟡 GR00T N1.7 GPU service + synthetic inference verified; UnifoLM VLM/deps pending | **HIGH** |
 
 ---
 
@@ -247,7 +245,7 @@ python scripts/test_dex3_contacts.py     # headless (no running sim): 6 fingerti
 
 | Model | Status | Location | Notes |
 |-------|--------|----------|-------|
-| **GR00T-N1.7-3B** | ✅ Downloaded (6.5 GB) | `~/foundation_models/GR00T-N1.7-3B` on spark02 | `REAL_G1` pretrain tag |
+| **GR00T-N1.7-3B** | ✅ GPU load + synthetic inference | `~/foundation_models/GR00T-N1.7-3B` on spark02 | `REAL_G1`, lazy WebSocket `:8765` |
 | **UnifoLM-VLA-Base** | ✅ Action checkpoint; VLM companion downloading | `~/foundation_models/UnifoLM-VLA-Base` on spark02 | EEF23 preview; not yet live |
 | **Cosmos3-Edge** | ✅ Downloaded (8.6 GB) | `~/foundation_models/Cosmos3-Edge` on spark02 | Video/world model |
 | **Cosmos-Reason2-2B** | 🟡 Access check in progress | Hugging Face cache on Spark02 | `HF_TOKEN` authenticated; do not assume model load until the test completes |
