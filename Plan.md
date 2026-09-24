@@ -124,7 +124,7 @@ from `/opt/ros/jazzy`.
 **Scene presets + VLM caption (2026-09-24)**: `--env` presets live in
 `g1_sim/environments.py` (1–2, tabletop) and `g1_sim/nav_environments.py`
 (3–5, navigation) — a preset only supplies IRA/prop/post-robot hooks so every
-scene keeps the identical robot + sensor + WBC stack. Six findings:
+scene keeps the identical robot + sensor + WBC stack. Seven findings:
 
 1. The steering-wheel reference pointed at `{root}/IsaacLab/…`, which 404s
    (IsaacLab's dir is `{root}/Isaac/IsaacLab/…`); USD only *warns* on an
@@ -139,7 +139,7 @@ scene keeps the identical robot + sensor + WBC stack. Six findings:
 4. IRA's config schema version must be `1.7.0`; a `1.6.0` config is rejected
    and setup silently falls back to a people-free warehouse. The baked-scene
    cache is now only used for 0-human runs (a cached stage has no navmesh, so
-   walkers would stand still).
+    walkers would stand still).
 5. IRA moves characters in **Fabric only** — the USD Xform *and* SkelRoot
    stay at the spawn point, so the old OmniGraph `ROS2PublishTransformTree`
    published frozen poses. Actor `/tf` is now an rclpy publisher fed by
@@ -149,6 +149,11 @@ scene keeps the identical robot + sensor + WBC stack. Six findings:
    node; against OpenAI it leaked `NVIDIA_API_KEY`, sent params gpt-6 rejects
    (`max_tokens`, `temperature`, …), and described only 1 of 10 props.
    `g1_sim/vlm_caption.py` patches all three in-process.
+7. **Discriminating test**: env 3 (`--env nav_people`, IRA, no boxes) robot
+   stands stable pelvis_z ≈ 0.72 m for 400+ updates with humans walking
+   nearby — no fall. Since env 3 does not fall, the floor/box obstacles in
+   env 4 (`nav_people_boxes`) are the likely fall cause; the navmesh hole
+   (robot footprint 0.8×0.8 m, zero margin) must be enlarged to ∼1.6 m.
 
 Navigation presets carve `NavMeshVolume` "Exclude" holes (robot footprint,
 boxes) and rebake before `timeline.play()`, since IRA bakes its navmesh before

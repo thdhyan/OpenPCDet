@@ -65,7 +65,9 @@ Legend: ✅ done · 🔄 in progress · ⛔ blocked · ⬜ not started
   both sensor checks pass, caption names all 10 objects.
 - 🔄 **Env 3 `nav_people`** — 6 IRA walkers at fixed spawn points, navmesh
   Exclude hole carved at the robot + rebake (nearest walkable point 0.40 m);
-  screenshots captured, sensor checks still pending.
+  **verified standing stable pelvis_z ≈ 0.72 m for 400+ updates with IRA humans;
+  no fall — floor/box obstacles are the fall cause for env 4**; screenshots captured,
+  sensor checks pending.
 - 🔄 **Env 4 `nav_people_boxes`** — + 0.8 m/10 kg and 0.3 m/1 kg boxes with
   their own navmesh holes (3 holes rebaked); screenshots captured, run in
   progress at commit time.

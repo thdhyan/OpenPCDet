@@ -1,8 +1,77 @@
 # HANDOFF — G1 Foundation Model Testing + TF/Camera/Lidar Alignment
 
-**Status**: CHECKPOINT — Workstream A (sensors/TF/Dex3) DONE and verified in sim (`9a40ebb`); scene presets `--env` 1–2 + VLM caption verified (`a8e7e38`), envs 3–5 verifying; UI and lazy GR00T/UnifoLM services verified on Spark02; Isaac ROS 5.0 Spark image/base build completed; cross-distro G1 relay implemented; GPU perception runtime still pending a free Spark GPU
+**Status**: CHECKPOINT — Workstream A (sensors/TF/Dex3) DONE and verified in sim (`9a40ebb`); scene presets `--env` 1–2 + VLM caption verified (`a8e7e38`), envs 3–5 verifying; UI and lazy GR00T/UnifoLM services verified on Spark02; Isaac Sim 6.0.1 ARM64, ROS 2 Lyrical Isaac ROS 5.0, and read-only AgenticROS now run directly on Spark02 over Cyclone DDS; no `dl` dependency or relay is used in the primary deployment; direct cuVSLAM/NVBlox validation passed on the local Spark graph
 **Last Updated**: 2026-09-24
 **Repo**: `/home/thakk100/Projects/thesis/G1_sim`
+
+---
+
+## Current all-on-Spark deployment — 2026-09-24
+
+The primary deployment is now local to `aim_spark02`:
+
+```text
+aim_spark02
+├── Isaac Sim 6.0.1 ARM64 (Isaac Lab image, internal Jazzy bridge)
+├── ROS 2 Lyrical graph on Cyclone DDS domain 42
+├── Isaac ROS 5.0 cuVSLAM + NVBlox
+├── AgenticROS rosbridge (read-only)
+└── GR00T / UnifoLM / UI services
+```
+
+`docker/docker-compose-isaac-spark.yml` is the primary compose file. Isaac Sim,
+Isaac ROS, and rosbridge use host networking, loopback-only Cyclone DDS, and the
+same `ROS_DOMAIN_ID`; they discover each other directly. Zenoh, the `dl` source,
+and `scripts/ros2_distro_bridge.py` are not part of this path. The older
+`docker-compose-isaac-ros5-spark.yml` remains a legacy/diagnostic relay
+configuration only.
+
+### Direct validation
+
+A bounded Spark-local run with the conservative flat-ground/no-props smoke
+scene observed all of the following in the same process graph:
+
+- native RGB8, converted RGB8, 32FC1 depth, mono16 depth, camera info, IMU,
+  `/clock`, `/tf`, and `/tf_static`;
+- 43 joints (29 body + 14 Dex3);
+- cuVSLAM odometry and path;
+- NVBlox mesh, ESDF/static map, and occupancy grid.
+
+The latest direct validation counted 170 native RGB frames, 98 converted
+RGB8 frames, 157 depth frames, 156 mono16 depth frames, 214 camera-info
+frames, 206 IMU frames, 206 joint-state frames with 43 joints, 208 clock
+messages, 127 cuVSLAM odometry frames, 127 path frames, 32 mesh messages, 30
+ESDF messages, and 30 occupancy-grid messages. `g1-isaac-sim-spark`,
+`g1-isaac-ros5-perception`, and `g1-agenticros-rosbridge-spark` were live on
+Spark; no relay container or `dl` source was running.
+
+The run used no command publishers. The simulator's arm/hand/cmd-vel
+subscribers remain available only for separately approved control paths.
+
+### Start command
+
+```bash
+ssh aim_spark02
+cd /home/thakk100/g1_sim
+mkdir -p /home/thakk100/.cache/g1-isaac-sim-base/{main,computecache,kit-cache,kit-data,home,config,data,logs,pkg}
+mkdir -p /home/thakk100/.cache/ov/hub
+G1_ROS_DOMAIN_ID=42 G1_SIM_STEPS=0 \
+ISAAC_SIM_CACHE_ROOT=/home/thakk100/.cache/g1-isaac-sim-base \
+ISAAC_ROS_GPU=0 \
+docker compose -f docker/docker-compose-isaac-spark.yml \
+  --profile g1 --profile agent up -d
+```
+
+Use `G1_SIM_STEPS=1000` for a bounded smoke run. The default scene flags are
+`--no-ira --flat-ground --no-props --freeze-robot --no-locomotion`; clear the
+corresponding `G1_*_FLAG` variables for a full scene/locomotion run. The
+Spark-specific launch uses native `/g1/camera/rgb` because the current Isaac
+Sim image emits `rgb8`; the converter remains available for BGR/BGRA/RGBA
+sources.
+
+Operational details and validation commands are in
+`docker/ISAAC_ROS_AGENTIC.md`. The old cross-machine/relay notes below are
+historical context, not the active topology.
 
 ---
 
@@ -19,9 +88,9 @@ gotchas: `docs/screenshots/envs_20260924/README.md`.
 |---|---|---|
 | `tabletop_wheel` (default) | 1. packing table + steering wheel | ✅ verified: stable 1000+ steps, in D435 view, `verify_sensor_tf` 11/11, `check_sensor_suite` PASS |
 | `tabletop_cluster` | 2. + wheel, R/G/B cubes, mug, soup can, mustard bottle, banana, foam brick (all semantically labelled) | ✅ verified: stable 800+ steps, both sensor checks pass, captioned |
-| `nav_people` | 3. IRA warehouse, 6 walkers, navmesh hole at the robot | 🔄 screenshots captured, sensor checks pending |
-| `nav_people_boxes` | 4. + big/small box, navmesh holes so people route around them | 🔄 run in progress at commit time |
-| `nav_people_forearm_box` | 5. + box welded to both forearms (elbow lower limit raised to the spawn angle) | ⬜ not started; still carries TEMP debug (`_dbg_box_watch`) |
+| `nav_people` | 3. IRA warehouse, 6 walkers, navmesh hole at the robot | ✅ verified: robot stands stable pelvis_z ≈ 0.72 m for 400+ updates with IRA humans walking nearby; no fall. Isolating fall cause to floor/box obstacles in env 4. 6 perspective captures saved (isaac_front.png, isaac_side.png, isaac_overview.png, isaac_behind.png, isaac_robot.png, isaac_top.png). |
+| `nav_people_boxes` | 4. + big/small box, navmesh holes so people route around them | 🔄 fall cause pending navmesh/box fix; env 3 (no boxes) stands stable, env 4 (with boxes) falls reproducibly at updates 100–150. See interpretation in HANDOFF.md fall diagnosis section. |
+| `nav_people_forearm_box` | 5. + box welded to both forearms (elbow lower limit raised to the spawn angle) | ⬜ not started; still carries TEMP debug (`_dbg_box_watch`) in `g1_sim/nav_environments.py` to delete after verification. |
 
 Rules learned the hard way:
 
@@ -65,7 +134,11 @@ Rules learned the hard way:
 
 ---
 
-## Isaac ROS 5.0 migration — 2026-09-24
+## Historical Isaac ROS relay validation — 2026-09-24 (superseded)
+
+The following records the earlier controlled relay experiment. The active
+all-on-Spark deployment is documented above; do not start the relay for the
+primary workflow.
 
 - **Primary target is now `aim_spark02` with Isaac ROS 5.0 / ROS 2 Lyrical.**
   NVIDIA's `release-5.0` `arm64-fastos` base image built successfully as
@@ -85,9 +158,47 @@ Rules learned the hard way:
   WebSocket round-trip passed. The Lyrical rosbridge image also started and
   listed the sink's RGB/depth/joint/TF topics. The final Spark image exposes
   both cuVSLAM/NVBlox component plugins and passes the Lyrical entrypoint
-  check. Full RGB/depth/joint/TF + cuVSLAM/NVBlox runtime validation still
-  requires a free Spark GPU; the current Spark training workload must not be
-  killed.
+  check. A controlled Jazzy synthetic source was then run through the live
+  relay into Spark: cuVSLAM odometry/path and native NVBlox mesh/ESDF/grid
+  outputs were observed. This is a pipeline smoke test, not yet a real Isaac
+  Sim warehouse run; the current Spark and `dl` GPU workloads were not killed.
+
+### Isaac ROS 5.0 runtime smoke test — 2026-09-24
+
+A bounded validation ran with the final Spark image and a controlled Jazzy
+publisher on `dl` (not Isaac Sim itself). The live path was:
+
+```text
+Jazzy synthetic G1 graph → WebSocket relay → Lyrical sink
+  → RGB8 conversion → cuVSLAM RGBD + NVBlox → read-only rosbridge
+```
+
+Observed in one run:
+
+- BGR8 source and RGB8 perception copy, 32FC1 depth, `mono16` depth, camera
+  info, IMU, `/clock`, `/tf`, and `/tf_static` all crossed the distro boundary.
+- `/g1/joint_states` contained 43 joints.
+- cuVSLAM published `/visual_slam/tracking/odometry` and
+  `/visual_slam/tracking/slam_path`; status showed an initialized tracker.
+- NVBlox published native 5.0 `/nvblox_node/mesh`,
+  `/nvblox_node/static_map_slice`, and `/nvblox_node/static_occupancy_grid`.
+- The Spark rosbridge upgraded a WebSocket handshake on `:9091` and exposed the
+  Lyrical graph; `/g1/arm_cmd`, `/g1/hand_cmd`, and `/g1/cmd_vel` were absent.
+
+The first run exposed and fixed four integration issues: Lyrical requires named
+`static_transform_publisher` arguments; NVBlox must be explicitly set to
+`global_frame=map` and `pose_frame=pelvis`; the relay sink must publish `/tf`
+reliably; and Isaac ROS 5.0 cuVSLAM/NVBlox reject BGR8, so the launch now
+converts a local RGB copy. The relay also caches/replays transient-local
+`/tf_static` when the sink connects after the source.
+
+The shared Spark GPU reached 86–95% utilization during the test, with about
+47–65 GiB available RAM reported by the host. No unrelated workload was
+terminated. The synthetic publisher was stopped after validation; a clean
+`g1-ros2-distro-relay-source` remains connected and waiting for real Isaac
+Sim input. The Spark sink, cuVSLAM/NVBlox, and read-only rosbridge remain up.
+A real Isaac Sim warehouse-to-Spark run is still pending because the `dl`
+GPUs are occupied by Ollama/other workloads.
 
 ## CHECKPOINT — 2026-09-24/25 — PAUSE BEFORE TRAVEL
 
@@ -97,8 +208,8 @@ Rules learned the hard way:
 
 | Service | Target | Reason |
 |---|---|---|
-| Isaac Sim + RGB/depth/TF/joint bridge | **`dl`** | x86 Docker/Isaac image, 4× RTX 6000 Ada, 503 GiB RAM |
-| Isaac ROS 5.0 cuVSLAM/NVBlox + AgenticROS | **`spark02`** | official DGX Spark `arm64-fastos` support; ROS 2 Lyrical |
+| Isaac Sim + RGB/depth/TF/joint bridge | **`aim_spark02`** | ARM64 Isaac Sim 6.0.1; local ROS graph |
+| Isaac ROS 5.0 cuVSLAM/NVBlox + AgenticROS | **`aim_spark02`** | ROS 2 Lyrical on the same Cyclone DDS domain |
 | GR00T N1.7 / UnifoLM GPU servers | **`spark02`** | GB10 GPU; venv now has CUDA-enabled Torch |
 | Foundation Model Debug UI | **`spark02`** with SSH/VPN port-forward if needed | Keeps model processes and UI together |
 | Spark04 | **Do not use for model storage** | Less than 500 GB free, violates fleet storage rule |
@@ -140,45 +251,34 @@ The UI server proxies internally to model `:8765` and simulator bridge `:8766`.
 3. **The old N1.5 locomanipulation checkout is historical fallback material only.**
    - Do not use it as the default or claim it is a drop-in N1.7 replacement.
 
-### Docker services still to finish
+### Docker services
 
-The repository contains the compose scaffold. The CPU-only AgenticROS
-rosbridge is running on `dl` at `ws://127.0.0.1:9091`; its client-publish
-filter is read-only. The AgenticROS MCP image initializes and lists the
-read-only rosapi graph. The pinned Isaac ROS 4.5 image is retained as a
-legacy dl fallback (59.4 GB); its package, plugin, CUDA 13.0, TensorRT 10.13,
-NCCL 2.28.9, and launch-argument checks pass. The Isaac ROS 5.0 Spark base
-image is built, but the GPU cuVSLAM/NVBlox services are **not yet running**
-because the Spark currently has an unrelated Isaac Sim training workload.
-Keep the split deployment:
+The primary Docker deployment is complete on `aim_spark02`. Isaac Sim 6.0.1
+ARM64, the ROS 2 Lyrical Isaac ROS 5.0 graph, and the read-only AgenticROS
+rosbridge share the Spark host and Cyclone DDS domain 42. The AgenticROS
+client-publish filter remains empty/read-only. Isaac ROS 4.5 and the WebSocket
+relay are retained only as explicit legacy/diagnostic fallbacks. The current
+active topology is:
 
 ```text
-dl
-├── isaac-sim       :8766 bridge source, GPU
-└── ros2-distro-relay-source  Jazzy -> ws://Spark:8768
-
 aim_spark02
-├── ros2-distro-relay-sink   Lyrical republisher
-├── isaac-ros5-perception    cuVSLAM + NVBlox, GPU
-├── agenticros-rosbridge    read-only :9091
+├── isaac-sim              Isaac Sim 6.0.1 ARM64, local ROS 2 graph
+├── isaac-ros5-perception  cuVSLAM + NVBlox, ROS 2 Lyrical
+├── agenticros-rosbridge  read-only :9091
 ├── gr00t                  :8765, GR00T N1.7, GPU
 ├── unifolm                :8767, UnifoLM-VLA, GPU
-├── sim-ws client          ROS2/Jazzy -> WebSocket -> UI
+├── sim-ws client          local ROS 2/WebSocket -> UI
 └── fm-ui                  :8080, browser UI and WS proxy
 ```
 
-Before starting the containers, confirm:
+Before starting the containers, confirm on Spark:
 
 ```bash
-ssh dl
-df -h /
-nvidia-smi
-docker ps
-
 ssh aim_spark02
 df -h /
 free -h
 nvidia-smi
+docker ps
 ```
 
 ### Simulator stream contract
@@ -191,9 +291,9 @@ nvidia-smi
 - `/tf`
 - `/tf_static`
 
-Joint states are the primary model state. TF is included as supplementary
-state and is displayed in the UI's Dex3-aware TF tree. The new TF path still
-needs a live ROS 2 run test.
+Joint states are the primary model state. TF is supplementary state and is
+validated in the live Spark ROS 2 graph and displayed in the UI's Dex3-aware
+TF tree.
 
 The warehouse scene's props come from the active `--env` preset
 (`g1_sim/environments.py`, `g1_sim/nav_environments.py`), always under
@@ -218,9 +318,11 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
   `http://10.131.37.135:8080/?demo=1&view=3d-view`
 - The Spark02 UI process is running (PID/log in `~/fm-ui.pid` and
   `~/fm-debug-ui.log`) and the browser smoke test passed.
-- No GPU Isaac Sim/CuVSLAM/NVBlox container has been started yet; the CPU-only
-  `g1-agenticros-rosbridge` container is running. The AgenticROS MCP image is
-  built but remains an explicit stdio client, not an automatic dispatcher.
+- The real Isaac Sim ARM64 source now runs locally on Spark02 with cuVSLAM/NVBlox
+  and the read-only Lyrical rosbridge. The direct run produced the complete
+  sensor/state/perception contract; no synthetic publisher or `dl` source is
+  active. The AgenticROS MCP image remains an explicit stdio client, not an
+  automatic dispatcher.
 
 ### New checkpoint — server, GPU venv, HF access, Dex3/TF work
 
@@ -255,7 +357,7 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
   `assets/robot/g1_29_dex3/g1_29dof_with_dex3_base_fix.usd`, publishes 43
   joints (29 body + 14 Dex3), and accepts `/g1/hand_cmd`.
 - `sim_ws_bridge.py` now serializes `/tf` and `/tf_static`; the UI has a TF tree
-  panel that marks Dex3 frames. This still needs a live ROS 2 run test.
+  panel that marks Dex3 frames. The live Spark ROS 2 TF path is validated.
 - The model selector includes UnifoLM-VLA; its GPU load/inference/unload test
   is complete and the listener is currently unloaded. GR00T is likewise
   available but unloaded between requests.
@@ -269,20 +371,24 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 - Isaac ROS **5.0** is the primary Spark target. NVIDIA's `release-5.0`
   `arm64-fastos` base builds on `aim_spark02`; the Spark image installs
   `ros-lyrical-isaac-ros-cuvslam` and `ros-lyrical-nvblox-ros`.
-- Isaac Sim 6.0.1 and the source graph remain on `dl`/Jazzy. The source relay
-  is observation-only and carries the standard RGB/depth/camera-info/IMU,
-  43-joint, TF, clock, and robot-description messages to Spark/Lyrical.
-- The old Isaac ROS **4.5** image and `perception` profile are a legacy dl
-  fallback only. The `dl` driver 590 line is not an Isaac ROS 5.0 x86 target.
+- Isaac Sim **6.0.1 ARM64** runs on `aim_spark02` in the Isaac Lab image. Its
+  internal Jazzy ROS 2 bridge and the Lyrical Isaac ROS 5.0 graph share
+  Cyclone DDS domain 42 over Spark loopback; no `dl` source or relay is needed.
+- The direct Spark run has produced RGB/depth/camera-info/IMU, 43 joints, TF,
+  clock, cuVSLAM odometry/path, and NVBlox mesh/ESDF/grid outputs. The Spark
+  compose file uses the native `rgb8` camera topic to avoid a reordering
+  Python conversion; the converter remains available for BGR/BGRA/RGBA input.
+- The old Isaac ROS **4.5** image and `perception` profile are a legacy
+  fallback only. `docker/docker-compose-isaac-ros5-spark.yml` and
+  `scripts/ros2_distro_bridge.py` are diagnostic/legacy artifacts.
 - `docker/agenticros/` provides a distro-parameterized read-only rosbridge
   sidecar and an AgenticROS MCP image/config. It does not start Gazebo or a
   second simulator. The bridge blocks client topic publishing. Service/action
   tools remain available only to an explicitly attached MCP client and must
   stay behind the UI approval gate.
-- GPU services have not been started because the Spark currently has an
-  unrelated Isaac Sim training workload. Do not kill it; wait for a free GPU,
-  then run the Spark `--profile ros5` stack and validate all required topics
-  together.
+- The Spark GPU is shared with unrelated Isaac Lab jobs. Do not kill them; the
+  all-on-Spark compose services must be monitored with `nvidia-smi`, RAM, and
+  container health checks.
 
 ---
 
@@ -298,13 +404,13 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
    `g1_sim/nav_environments.py`.
 2. UnifoLM EEF23 smoke inference is complete; keep the service unloaded until
    an explicit request arrives.
-3. Isaac ROS 5.0 Spark base build and the cross-distro relay self-test are
-   complete; the legacy 4.5 image remains available only as a fallback.
-4. When Spark's GPU is free, start Isaac Sim + source relay on `dl`, then the
-   Spark `--profile ros5` sink/perception stack. Verify RGB, depth, 43 joints,
-   `/tf`, `/tf_static`, cuVSLAM odometry/path, and NVBlox mesh/ESDF together.
-5. Start the Spark read-only AgenticROS rosbridge and keep all command/action
-   paths behind explicit UI approval.
+3. Isaac ROS 5.0 Spark base build and the direct all-on-Spark validation are
+   complete; the legacy 4.5 image and relay remain available only as
+   fallbacks.
+4. Keep Isaac Sim, Isaac ROS 5.0, and the read-only AgenticROS rosbridge on
+   Spark with Cyclone DDS. Verify RGB, depth, 43 joints, `/tf`, `/tf_static`,
+   cuVSLAM odometry/path, and NVBlox mesh/ESDF together.
+5. Keep all command/action paths behind explicit UI approval.
 6. Add a multi-process model manager with automatic idle eviction.
 7. Keep WBC on legs/waist and route only joint-space arm/hand trajectories after
    explicit preview approval. UnifoLM EEF output remains non-dispatching until
@@ -317,7 +423,7 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 | Workstream | Status | Priority |
 |------------|--------|----------|
 | **A. TF/Camera/Lidar + Dex3** | ✅ Verified live (verify_sensor_tf 11/11, check_sensor_suite PASS, test_dex3_contacts PASS); next = TacSL (`docs/TACSL_PLAN.md`) | MEDIUM |
-| **B. Foundation Model Testing (GR00T/UnifoLM/Cosmos)** | 🟡 GR00T and UnifoLM inference verified; both services unloaded; Isaac ROS GPU runtime pending | **HIGH** |
+| **B. Foundation Model Testing (GR00T/UnifoLM/Cosmos)** | 🟡 GR00T and UnifoLM inference verified; both services unloaded; all-on-Spark Isaac ROS runtime validated | **HIGH** |
 
 ---
 
