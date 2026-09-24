@@ -1,8 +1,119 @@
 # HANDOFF — G1 Foundation Model Testing + TF/Camera/Lidar Alignment
 
-**Status**: Foundation model setup READY TO RESUME; TF/Camera depth BROKEN
-**Last Updated**: 2026-09-24
+**Status**: PAUSED — UI/URDF preview works; real GR00T N1.7 blocked; Docker GR00T adapter pending; TF/Camera depth BROKEN
+**Last Updated**: 2026-09-24/25
 **Repo**: `/home/thakk100/Projects/thesis/G1_sim`
+
+---
+
+## CHECKPOINT — 2026-09-24/25 — PAUSE BEFORE TRAVEL
+
+**Decision: keep the Docker-based deployment plan. Do not move the simulator or model server back to the laptop.**
+
+### Target machines
+
+| Service | Target | Reason |
+|---|---|---|
+| Isaac Sim + RGB/depth/TF/joint bridge | **`dl`** | 4× RTX 6000 Ada, 503 GiB RAM, Docker/NCCL available |
+| GR00T G1 inference server | **`dl`** | Same GPU host as sim; avoids cross-machine DDS and large image/video transport |
+| Foundation Model Debug UI | **`dl`** with SSH/VPN port-forward if needed | Keeps proxy, model, and simulator on one host |
+| Spark02 | **Not the inference target** | Current `~/venvs/gr00t` has CPU-only Torch; useful only as a temporary UI/static host |
+| Spark04 | **Do not use for model storage** | Less than 500 GB free, violates fleet storage rule |
+
+Use only port `8080` from the laptop through an SSH tunnel:
+
+```bash
+ssh -N -L 8080:127.0.0.1:8080 dl
+# open http://localhost:8080
+```
+
+The UI server proxies internally to model `:8765` and simulator bridge `:8766`.
+
+### Model decision
+
+1. **GR00T N1.7 is blocked and must not be the default.**
+   - `GR00T-N1.7-3B` hard-codes `nvidia/Cosmos-Reason2-2B` as its VLM backbone.
+   - It fails at load time without gated Hugging Face access.
+   - Do not replace that backbone with Cosmos3-Edge/Nano; their architecture and hidden-state contract are incompatible.
+   - The Spark02 GR00T server was stopped after confirming this failure.
+
+2. **Best direct-G1 candidate: `nvidia/g1_locomanip_finetune`.**
+   - GR00T N1.5 G1 locomanipulation fine-tune, not Cosmos Reason2-dependent.
+   - Already downloaded on `dl`:
+     - model: `~/foundation_models/g1_locomanip_finetune/model`
+     - code: `~/Isaac-GR00T-n1d5` (`4af2b62`)
+     - data config: `~/Projects/IsaacLab/scripts/imitation_learning/locomanipulation_sdg/gr00t/data_config.py`
+   - It outputs 32-D chunks: left/right hand poses, finger joints, base velocity, and base height.
+   - It needs an old N1.5 adapter plus an explicit EEF-to-joint IK step before WBC dispatch.
+
+3. **Other candidates assessed:**
+   - GR00T N1.6: open Eagle backbone, but base processor is not a Unitree-G1 embodiment and CPU/ARM Spark venv cannot run it. Not a drop-in replacement.
+   - OpenPI/π0/π0.5: open code/checkpoints, but no native Unitree G1 checkpoint; requires G1 fine-tuning.
+   - SmolVLA: lightweight/open, but no G1-native policy checkpoint; requires retargeting/fine-tuning.
+   - UnifoLM-VLA: G1 datasets and G1 action configuration exist, but requires a separate 7B VLM and G1 fine-tuning.
+
+**Conclusion:** no alternative meets “G1 + open weights + no substantial training” today. Keep the G1 locomanip fine-tune as the next server target; do not ship a misleading N1.7 fallback.
+
+### Docker services still to finish on `dl`
+
+The repository contains the compose scaffold, but the complete GR00T service is **not yet running**. The UI/URDF preview is working; the real G1 model server remains the next implementation task.
+
+Planned services:
+
+```text
+dl
+├── isaac-sim       :8766 bridge source, GPU
+├── gr00t           :8765, G1 N1.5 locomanip model, GPU
+├── sim-ws          :8766, RGB/depth/joints/TF bridge
+└── fm-ui           :8080, browser UI and WS proxy
+```
+
+Before starting the containers, confirm:
+
+```bash
+ssh dl
+df -h /
+nvidia-smi
+docker ps
+```
+
+### Simulator stream contract
+
+`sim_ws_bridge.py` currently streams:
+
+- `/g1/camera/rgb`
+- `/g1/camera/depth`
+- `/g1/joint_states`
+
+**Still missing:** subscriptions/serialization for `/tf` and `/tf_static`. Add those before claiming the simulator input is complete. The UI already has a connection path, but no TF visualization panel yet.
+
+The warehouse scene contains the robot and the locomanip props added by `add_locomanip_props()`:
+
+```text
+/World/Props/PackingTable
+/World/Props/SteeringWheel
+```
+
+Do not overwrite or regenerate the warehouse USD/USDA until the scene has been visually checked with the table, wheel, robot, RGB, depth, and TF stream in the same run.
+
+### Current Git/UI state
+
+- UI/URDF implementation pushed in commit `06e96bc`.
+- GitHub branch: `isaacsim6-rtx-emitter` on configured `origin`.
+- Spark02 clone: `~/Projects/fm-debug-ui` at `06e96bc`.
+- Verified offline URDF preview URL:
+  `http://10.131.37.135:8080/?demo=1&view=3d-view`
+- The Spark02 UI process was stopped before pause; restart it only if a quick static preview is needed.
+- No Docker container has been started yet for the real Isaac Sim + GR00T stack.
+
+### Resume order
+
+1. Fix `/tf` and `/tf_static` streaming in `scripts/sim_ws_bridge.py`.
+2. Add TF data to the UI input panel.
+3. Write the N1.5 G1 locomanip WebSocket adapter using the downloaded checkpoint.
+4. Add the EEF trajectory preview and explicit IK conversion before any `/g1/arm_cmd` dispatch.
+5. Add a `gr00t` service to `docker/docker-compose-fm.yml` using `dl` GPU Docker.
+6. Start Isaac Sim + bridge + GR00T + UI on `dl` and verify all four ports.
 
 ---
 
@@ -11,7 +122,7 @@
 | Workstream | Status | Priority |
 |------------|--------|----------|
 | **A. TF/Camera/Lidar Alignment** | ❌ Camera static TF missing; depth points below floor | **HIGH — fix first** |
-| **B. Foundation Model Testing (GR00T/Cosmos)** | ✅ Setup complete; WebSocket bridge working; paused | MEDIUM — resume after A |
+| **B. Foundation Model Testing (GR00T/Cosmos)** | ⏸️ Paused; UI/URDF preview works, N1.7 blocked, N1.5 G1 adapter pending | MEDIUM — resume after A |
 
 ---
 
