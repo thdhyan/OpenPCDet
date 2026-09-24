@@ -1,6 +1,6 @@
 # HANDOFF — G1 Foundation Model Testing + TF/Camera/Lidar Alignment
 
-**Status**: CHECKPOINT — Workstream A (sensors/TF/Dex3) DONE and verified in sim (`9a40ebb`); UI server and lazy GR00T N1.7 GPU service verified on Spark02; UnifoLM VLM download/dependency validation in progress; full Docker stack pending
+**Status**: CHECKPOINT — Workstream A (sensors/TF/Dex3) DONE and verified in sim (`9a40ebb`); UI server and lazy GR00T N1.7 GPU service verified on Spark02; UnifoLM assets/dependencies ready but GPU load retry is blocked by another active workload; full Docker stack pending
 **Last Updated**: 2026-09-24
 **Repo**: `/home/thakk100/Projects/thesis/G1_sim`
 
@@ -131,8 +131,12 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 - GR00T N1.7 is live on Spark02 at `:8765`. The service loaded in ~12–15s,
   fell back to SDPA because the available aarch64 FlashAttention wheel is
   CUDA-12-linked, and returned a verified 40-step synthetic inference preview.
-- The UnifoLM-VLA action checkpoint is present on Spark02; its 16+ GB
-  `UnifoLM-VLM-Base` companion download is still running.
+- The UnifoLM-VLA action checkpoint and 16+ GB `UnifoLM-VLM-Base` companion are
+  downloaded on Spark02. The official dependencies and editable package are
+  installed; `baseframework` and `qwen_vl_utils` import successfully.
+- The first UnifoLM GPU load was stopped after the VLM shards loaded because
+  Spark's GPU was occupied by another active Ollama `qwen3.6:27b` process. No
+  UnifoLM model error was observed; retry the load after that workload exits.
 - `scripts/unifolm_ws_server.py` now provides a lazy, unloadable EEF23 adapter.
   It requires an explicit 23-D EEF/base state and intentionally does not guess
   EEF poses from joint angles.
@@ -159,8 +163,8 @@ this checkpoint, use the checkpoint and resume order above.
 
 ### Resume order
 
-0. Let the UnifoLM-VLM download and its dependency install finish; do not launch
-   duplicate installs or model processes.
+0. Let the active Spark GPU workload finish; do not launch a second UnifoLM
+   load while another process owns the GPU.
 1. Run one UnifoLM EEF23 adapter smoke request with an explicit 23-D state.
 2. Add a multi-process model manager with automatic idle eviction.
 3. Add `gr00t` and `unifolm` services to the Docker Compose stack.
@@ -177,7 +181,7 @@ this checkpoint, use the checkpoint and resume order above.
 | Workstream | Status | Priority |
 |------------|--------|----------|
 | **A. TF/Camera/Lidar + Dex3** | ✅ Verified live (verify_sensor_tf 11/11, check_sensor_suite PASS, test_dex3_contacts PASS); next = TacSL (`docs/TACSL_PLAN.md`) | MEDIUM |
-| **B. Foundation Model Testing (GR00T/UnifoLM/Cosmos)** | 🟡 GR00T N1.7 GPU service + synthetic inference verified; UnifoLM VLM/deps pending | **HIGH** |
+| **B. Foundation Model Testing (GR00T/UnifoLM/Cosmos)** | 🟡 GR00T live; UnifoLM assets/deps ready, GPU load retry blocked by active Ollama workload | **HIGH** |
 
 ---
 
