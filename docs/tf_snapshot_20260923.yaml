@@ -1,134 +1,189 @@
-captured: 2026-09-23 (sim headless, standing, WBC internal)
+captured: 2026-09-23 Dex3 G1 (g1_29dof_with_dex3_base_fix.usd, floating base), headless,
+  standing, WBC internal, spawn yaw +90 deg facing the packing table
 fixed_frame: World
 world:
   pelvis:
     xyz:
-    - -0.1868
-    - 0.0073
-    - 0.7402
+    - -0.0876
+    - -0.2171
+    - 0.7413
     quat_xyzw:
-    - -0.0015
-    - -0.0404
-    - -0.0786
-    - 0.9961
+    - 0.0236
+    - -0.0234
+    - 0.6668
+    - 0.7445
   torso_link:
     xyz:
-    - -0.195
-    - 0.0087
-    - 0.7938
+    - -0.0882
+    - -0.2239
+    - 0.7849
     quat_xyzw:
-    - -0.005
-    - 0.0034
-    - -0.0798
-    - 0.9968
+    - -0.0106
+    - 0.0037
+    - 0.6658
+    - 0.746
   mid360_link:
     xyz:
-    - -0.1915
-    - 0.0126
-    - 1.2125
+    - -0.0919
+    - -0.2147
+    - 1.2133
     quat_xyzw:
-    - 0.9968
-    - -0.0798
-    - -0.0034
-    - 0.0058
+    - 0.7457
+    - 0.6653
+    - -0.0228
+    - 0.0276
   d435_link:
     xyz:
-    - -0.1321
-    - 0.0208
-    - 1.2131
+    - -0.1028
+    - -0.1557
+    - 1.2134
     quat_xyzw:
-    - 0.0276
-    - 0.4053
-    - -0.075
-    - 0.9107
+    - -0.2784
+    - 0.3045
+    - 0.6049
+    - 0.6811
   d435_color_optical_frame:
     xyz:
-    - -0.0326
-    - 0.0058
-    - 1.3125
+    - -0.0922
+    - -0.0545
+    - 1.3014
     quat_xyzw:
-    - -0.6067
-    - 0.7093
-    - -0.2764
-    - 0.2289
+    - 0.9344
+    - -0.0511
+    - 0.0251
+    - -0.3516
   imu_in_torso:
     xyz:
-    - -0.2334
-    - 0.0141
-    - 0.9319
+    - -0.0917
+    - -0.2604
+    - 0.9336
     quat_xyzw:
-    - -0.005
-    - 0.0034
-    - -0.0798
-    - 0.9968
+    - -0.0106
+    - 0.0037
+    - 0.6658
+    - 0.746
   imu_in_pelvis:
     xyz:
-    - -0.1355
-    - -0.0006
-    - 0.6608
+    - -0.0824
+    - -0.1666
+    - 0.6611
     quat_xyzw:
-    - -0.0015
-    - -0.0404
-    - -0.0786
-    - 0.9961
+    - 0.0236
+    - -0.0234
+    - 0.6668
+    - 0.7445
   left_ankle_roll_link:
     xyz:
-    - -0.0968
-    - 0.1005
+    - -0.1907
+    - -0.1319
     - 0.0349
     quat_xyzw:
-    - 0.0005
     - -0.0001
-    - -0.0489
-    - 0.9988
+    - 0.0004
+    - 0.6802
+    - 0.7331
   right_ankle_roll_link:
     xyz:
-    - -0.1728
-    - -0.1079
-    - 0.035
+    - 0.0244
+    - -0.2074
+    - 0.0349
     quat_xyzw:
-    - 0.0004
-    - 0.0003
-    - -0.1255
-    - 0.9921
+    - -0.0009
+    - -0.0008
+    - 0.6348
+    - 0.7727
+  left_hand_palm_link:
+    xyz:
+    - -0.2259
+    - -0.061
+    - 1.0287
+    quat_xyzw:
+    - 0.3158
+    - -0.3602
+    - 0.5889
+    - 0.6509
+  right_hand_palm_link:
+    xyz:
+    - 0.0772
+    - -0.0955
+    - 1.032
+    quat_xyzw:
+    - 0.3153
+    - -0.3608
+    - 0.5841
+    - 0.6552
+  left_hand_thumb_2_link:
+    xyz:
+    - -0.1601
+    - -0.0559
+    - 1.0483
+    quat_xyzw:
+    - 0.3182
+    - -0.3577
+    - 0.5843
+    - 0.6552
+  right_hand_index_1_link:
+    xyz:
+    - 0.0829
+    - -0.0531
+    - 1.1513
+    quat_xyzw:
+    - 0.3148
+    - -0.3612
+    - 0.5849
+    - 0.6545
 relative:
   torso_link->mid360_link:
     xyz:
     - 0.0003
     - 0.0
-    - 0.4188
+    - 0.4284
     quat_xyzw:
-    - 1.0
+    - 0.9997
+    - 0.0
+    - -0.0256
     - -0.0
-    - -0.0
-    - 0.0008
   torso_link->d435_link:
     xyz:
     - 0.0576
     - 0.0175
-    - 0.4199
+    - 0.4299
     quat_xyzw:
-    - 0.0
+    - -0.0
     - 0.4035
     - -0.0
     - 0.915
   d435_link->d435_color_optical_frame:
     xyz:
-    - -0.0064
-    - 0.0
-    - 0.1413
+    - 0.001
+    - -0.0
+    - 0.1345
     quat_xyzw:
-    - 0.5
     - -0.5
     - 0.5
     - -0.5
+    - 0.5
+  left_wrist_yaw_link->left_hand_palm_link:
+    xyz:
+    - 0.0415
+    - 0.003
+    - 0.0
+    quat_xyzw:
+    - -0.0
+    - -0.0
+    - -0.0
+    - 1.0
 sensor_mounts:
-  mid360_rtx_prim: child of mid360_link, identity orientation, translation (0,0,-0.15)
-    in mid360_link = +15 cm world-up (link is rolled 180 deg)
-  mid360_points_frame: mid360_link (publisher adds the 0.15 m prim offset)
+  mid360_joint: 're-authored from unitree_ros g1_29dof_with_hand_rev_1_0.urdf: xyz
+    (0.0002835, 0.00003, 0.428434), rpy (pi, 0.0511, 0) - inverted'
+  mid360_rtx_prim: child of mid360_link, identity, translation (0,0,-0.15) = +15 cm
+    world-up
+  mid360_points_frame: mid360_link (publisher maps prim pose into the link)
   mid360_profile: assets/lidar_configs_solid (1 solid-state state, 20k real rays,
     cycled per scan from assets/scan_patterns/mid360.npy)
   d435_camera_prim: torso_link + D435_POS (URDF + 10 cm fwd/up clearance), RotateY(-42.4)
     RotateZ(-90)
-  d435_optical_static_tf: d435_link -> d435_color_optical_frame carries the clearance
-    offset + REP-103 rotation
+  d435_optical_static_tf: d435_link -> d435_color_optical_frame measured from the
+    stage (optical_pose_in_link)
+  dex3_tip_contacts: IsaacContactSensor on left/right hand thumb_2, index_1, middle_1
+    links

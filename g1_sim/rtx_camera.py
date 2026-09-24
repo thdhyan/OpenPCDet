@@ -33,23 +33,31 @@ from __future__ import annotations
 # OpticalTF values without re-running scripts/verify_sensor_tf.py - verified
 # 2026-09-23 (depth clouds on the floor to <1 cm), frames recorded in
 # docs/tf_snapshot_20260923.yaml.
-D435_URDF_POS = (0.0576235, 0.01753, 0.41987)
 D435_POS = (0.1576235, 0.01753, 0.51987)  # URDF (0.058, 0.018, 0.420) + (0.10, 0.0, 0.10) clearance
 D435_PITCH_RAD = 0.8307767239493009  # ~47.6° downward tilt — unchanged
 
 
-def _optical_offset_in_link() -> tuple[float, float, float]:
-    """Clearance offset (D435_POS - D435_URDF_POS, torso frame) expressed in
-    d435_link's frame, i.e. rotated by the inverse of the link's pitch.
+def optical_pose_in_link(camera_prim_path: str, link_prim_path: str) -> tuple[list[float], list[float]]:
+    """Pose of the camera's optical frame in ``link_prim_path`` (d435_link),
+    as (translation, quaternion xyzw) for the static TF.
 
-    /tf places d435_link at the URDF position, but the camera prim renders
-    from D435_POS - without this the depth clouds land ~14 cm off.
+    Measured from the stage rather than URDF constants: the prim renders from
+    D435_POS while the robot USD places d435_link wherever its URDF says
+    (g1_29dof vs rev 1.0 Dex3 differ by 1 cm) - a mismatch put the depth
+    clouds ~14 cm off. Optical frame = USD camera frame rotated 180 deg
+    about X (Z forward, Y down).
     """
-    import math
+    import omni.usd
+    from pxr import Gf, UsdGeom
 
-    dx, dy, dz = (p - u for p, u in zip(D435_POS, D435_URDF_POS))
-    c, s = math.cos(D435_PITCH_RAD), math.sin(D435_PITCH_RAD)
-    return (c * dx - s * dz, dy, s * dx + c * dz)
+    cache = UsdGeom.XformCache()
+    stage = omni.usd.get_context().get_stage()
+    cam = cache.GetLocalToWorldTransform(stage.GetPrimAtPath(camera_prim_path))
+    link = cache.GetLocalToWorldTransform(stage.GetPrimAtPath(link_prim_path))
+    optical_in_cam = Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(1, 0, 0), 180.0))
+    rel = (optical_in_cam * cam * link.GetInverse()).RemoveScaleShear()
+    q = rel.ExtractRotationQuat().GetNormalized()
+    return list(rel.ExtractTranslation()), [*q.GetImaginary(), q.GetReal()]
 
 TOPIC_RGB = "/g1/camera/rgb"
 TOPIC_DEPTH = "/g1/camera/depth"
@@ -74,11 +82,6 @@ CAMERA_FRAME = "d435_link"
 # d435_link - the same pattern RealSense's own driver uses
 # (camera_link -> camera_color_optical_frame).
 OPTICAL_FRAME = "d435_color_optical_frame"
-# Quaternion (IJKR = x,y,z,w) rotating d435_link's axes onto the optical
-# frame's: verified by hand (R * child_axis = parent_axis for all three
-# basis vectors) - this is the standard REP-103 camera_link->optical_frame
-# value used across the ROS ecosystem, not something invented for this repo.
-OPTICAL_QUAT_IJKR = (-0.5, 0.5, -0.5, 0.5)
 # imu_in_torso is a bare Xform in the URDF/USD (a TF frame only, per the
 # "IMU" comment in g1_29dof.urdf) - it carries no IsaacSensor schema until
 # spawn_imu_sensor() creates one under it.
@@ -167,6 +170,7 @@ def apply_semantics(prim_paths: dict[str, str]) -> int:
 
 def attach_camera_publishers(
     camera_prim_path: str,
+    link_prim_path: str | None = None,
     graph_path: str = "/ActionGraph/CameraROS2",
     width: int = 640,
     height: int = 480,
@@ -187,8 +191,17 @@ def attach_camera_publishers(
     RViz - confirmed live 2026-08-11 (its Z-axis was all-positive/
     range-like, not up-like). A static TF from ``d435_link`` supplies the
     fixed rotation, same pattern as RealSense's own driver.
+
+    ``link_prim_path`` is the robot's ``d435_link`` prim; the static TF is
+    measured from it by :func:`optical_pose_in_link`.
     """
     import omni.graph.core as og
+
+    if link_prim_path is None:
+        # Camera prim is <robot>/torso_link/d435_camera; d435_link is a
+        # sibling of torso_link under the robot root.
+        link_prim_path = f"{camera_prim_path.rsplit('/', 2)[0]}/d435_link"
+    optical_t, optical_q = optical_pose_in_link(camera_prim_path, link_prim_path)
 
     nodes = [
         ("OnTick", "omni.graph.action.OnPlaybackTick"),
@@ -215,8 +228,8 @@ def attach_camera_publishers(
         ("CameraInfo.inputs:frameId", frame_id),
         ("OpticalTF.inputs:parentFrameId", CAMERA_FRAME),
         ("OpticalTF.inputs:childFrameId", OPTICAL_FRAME),
-        ("OpticalTF.inputs:translation", list(_optical_offset_in_link())),
-        ("OpticalTF.inputs:rotation", list(OPTICAL_QUAT_IJKR)),
+        ("OpticalTF.inputs:translation", optical_t),
+        ("OpticalTF.inputs:rotation", optical_q),
         ("OpticalTF.inputs:topicName", "/tf_static"),
         ("OpticalTF.inputs:staticPublisher", True),
     ]

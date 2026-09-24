@@ -35,17 +35,28 @@ ARM_CMD_TOPIC = "/g1/arm_cmd"
 # Names accepted from publishers (arm joints only - leg/waist targets are
 # the WBC's exclusive territory and are silently dropped if sent).
 ARM_SET = frozenset(ARM_JOINTS)
-_ARM_INDEX = {name: i for i, name in enumerate(ARM_JOINTS)}
+
+# Dex3 fingers (7 per hand), same JointState contract on their own topic.
+HAND_CMD_TOPIC = "/g1/hand_cmd"
+DEX3_HAND_JOINTS = [
+    f"{side}_hand_{finger}_joint"
+    for side in ("left", "right")
+    for finger in ("thumb_0", "thumb_1", "thumb_2", "index_0", "index_1", "middle_0", "middle_1")
+]
 
 
 class ArmTargetSubscriber:
-    """Buffers ``/g1/arm_cmd`` JointState messages for the warehouse loop."""
+    """Buffers JointState targets for a fixed joint group (default: the 14
+    arm joints on ``/g1/arm_cmd``; also used for the Dex3 fingers on
+    ``/g1/hand_cmd``) for the warehouse loop."""
 
-    def __init__(self, node, topic: str = ARM_CMD_TOPIC):
+    def __init__(self, node, topic: str = ARM_CMD_TOPIC, joints: list[str] = ARM_JOINTS):
         from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
         from sensor_msgs.msg import JointState
 
-        self._targets = np.zeros(len(ARM_JOINTS), dtype=np.float32)
+        self.joints = list(joints)
+        self._index = {name: i for i, name in enumerate(self.joints)}
+        self._targets = np.zeros(len(self.joints), dtype=np.float32)
         self._have_cmd = False
         self._last_rx = 0.0
         self._received = 0
@@ -63,7 +74,7 @@ class ArmTargetSubscriber:
         positions = msg.position
         applied = 0
         for name, pos in zip(msg.name, positions):
-            idx = _ARM_INDEX.get(name)
+            idx = self._index.get(name)
             if idx is None:
                 self._dropped += 1
                 continue
@@ -80,7 +91,7 @@ class ArmTargetSubscriber:
         rclpy.spin_once(self._node, timeout_sec=0.0)
 
     def get_targets(self) -> np.ndarray | None:
-        """Latest (14,) arm targets in ARM_JOINTS order, or None if never commanded."""
+        """Latest targets in ``self.joints`` order, or None if never commanded."""
         return self._targets.copy() if self._have_cmd else None
 
     def age(self) -> float:

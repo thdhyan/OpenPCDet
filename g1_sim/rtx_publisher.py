@@ -62,6 +62,7 @@ class RtxLidarPublisher:
         max_points: int = 20000,
         max_range_m: float = 40.0,
         sensor_offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        sensor_rotation: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0),
     ):
         from isaacsim.sensors.experimental.rtx import LidarSensor
         from rclpy.node import Node
@@ -86,9 +87,15 @@ class RtxLidarPublisher:
         # fix is moving the lidar ~2cm to clear it (G1 mount: -0.05 -> -0.03).
         # The #685 race above only explains 1-2 warnings at sensor spin-up.
         self.max_range_m = max_range_m
-        # Sensor prim's translation in frame_id: GMO points are sensor-origin
-        # relative, so shift them to be truly expressed in frame_id.
+        # Sensor prim's pose in frame_id (translation, wxyz rotation): GMO
+        # points are sensor-frame, so map them into frame_id before publishing.
         self.sensor_offset = np.asarray(sensor_offset, dtype=np.float32)
+        w, x, y, z = sensor_rotation
+        self.sensor_rot = np.array([
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ], dtype=np.float32)
         self.publish_period = 1.0 / publish_rate
         self._last_publish = -float("inf")
 
@@ -270,7 +277,7 @@ class RtxLidarPublisher:
         if len(xyz) == 0:
             return None, None
 
-        return xyz + self.sensor_offset, intensities
+        return xyz @ self.sensor_rot.T + self.sensor_offset, intensities
 
     def _to_message(self, points: np.ndarray, intensities: np.ndarray, sim_time: float):
         msg = self._PointCloud2()

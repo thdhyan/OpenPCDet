@@ -27,7 +27,7 @@ from std_msgs.msg import String
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_URDF = (
-    REPO / "assets/robot/g1_29/g1_29dof.urdf"
+    REPO / "assets/robot/g1_29/g1_29dof_with_hand_rev_1_0.urdf"
 )
 
 

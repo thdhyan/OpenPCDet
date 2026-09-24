@@ -237,8 +237,8 @@ import omni.timeline
 import omni.usd
 from pxr import Gf, UsdGeom, UsdPhysics, Usd
 
-from g1_sim.arm_override import ArmTargetSubscriber
-from g1_sim.g1_robot import load_g1
+from g1_sim.arm_override import DEX3_HAND_JOINTS, HAND_CMD_TOPIC, ArmTargetSubscriber
+from g1_sim.g1_robot import DEFAULT_USD, load_g1
 from g1_sim.rtx_camera import attach_cmd_vel_subscriber
 from g1_sim.rtx_lidar import MID360_POS, blind_radius
 from g1_sim.warehouse import WAREHOUSE_USD, build_flat_ground, load_environment
@@ -248,7 +248,7 @@ ENABLE_LOCOMOTION = not args_cli.no_locomotion
 ENABLE_IRA = not args_cli.no_ira
 WBC_CONTROL_HZ = 50.0  # decoupled_wbc's trained control rate
 
-G1_USD = REPO / "assets/g1_29dof_sensors.usd"
+G1_USD = DEFAULT_USD
 ROBOT_PRIM = "/World/G1"
 # Fallback-only static targets (used when IRA is off/unavailable, so the
 # scene still has something LiDAR-visible besides the robot itself).
@@ -496,6 +496,15 @@ def main() -> None:
                 kds=np.full((1, len(ARM_JOINTS)), ARM_KD, dtype=np.float32),
                 joint_names=ARM_JOINTS,
             )
+            # Dex3 fingers: IsaacLab G129_CFG_WITH_DEX3 "hands" actuator gains.
+            hand_joints = [n for n in robot_articulation.dof_names if "_hand_" in n]
+            if hand_joints:
+                robot_articulation.set_gains(
+                    kps=np.full((1, len(hand_joints)), 8.0, dtype=np.float32),
+                    kds=np.full((1, len(hand_joints)), 1.5, dtype=np.float32),
+                    joint_names=hand_joints,
+                )
+                print(f"[WH] Dex3 hands      : {len(hand_joints)} joints, kp 8 kd 1.5")
             if args_cli.wbc_mode == "external":
                 import rclpy
 
@@ -527,6 +536,7 @@ def main() -> None:
 
     cmd_vel_graph_path = None
     arm_sub = None
+    hand_sub = None
     if ENABLE_ROS2:
         # NOT attach_ros2_publishers() here: that OG-graph path's
         # ROS2RtxLidarHelper advertises /livox/mid360/points but never
@@ -570,6 +580,9 @@ def main() -> None:
 
         arm_sub = ArmTargetSubscriber(rclpy.create_node("g1_arm_override"))
         print("[WH] arm override    : /g1/arm_cmd -> ARM_JOINTS (external, hold-last)")
+        if all(j in (robot_articulation.dof_names or []) for j in DEX3_HAND_JOINTS):
+            hand_sub = ArmTargetSubscriber(rclpy.create_node("g1_hand_override"), HAND_CMD_TOPIC, DEX3_HAND_JOINTS)
+            print(f"[WH] hand override   : {HAND_CMD_TOPIC} -> {len(DEX3_HAND_JOINTS)} Dex3 joints (hold-last)")
 
     else:
         print("[WH] ROS2 disabled")
@@ -658,6 +671,12 @@ def main() -> None:
                     )
                     if arm_sub.stats[0] == 1:
                         print("[WH] arm override    : EXTERNAL arm targets active (WBC legs/waist unaffected)")
+
+            if hand_sub is not None:
+                hand_sub.spin_once()
+                hand_tgt = hand_sub.get_targets()
+                if hand_tgt is not None:
+                    robot_articulation.set_joint_position_targets(hand_tgt[None, :], joint_names=DEX3_HAND_JOINTS)
 
             sent = g1.step(sim.current_time)
             if sent:

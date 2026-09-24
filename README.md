@@ -242,8 +242,24 @@ G1_sim/
 | `/livox/mid360/imu` | `Imu` | OmniGraph (Mid-360 built-in ICM-40609, frame `mid360_link`) |
 | `/g1/camera/imu` | `Imu` | OmniGraph (RealSense D435i BMI055, frame `d435_link`) |
 | `/clock` | `Clock` | OmniGraph |
+| `/g1/dex3/<side>/<finger>/contact` | `WrenchStamped` | Dex3 fingertip contact (thumb/index/middle, World-frame net force) |
+| `/robot_description` | `String` | Dex3 rev 1.0 URDF, latched by the sim |
 
-Subscribed: `/g1/cmd_vel` (`Twist`) → WBC velocity command at 50 Hz.
+Subscribed: `/g1/cmd_vel` (`Twist`) → WBC velocity command at 50 Hz;
+`/g1/arm_cmd` and `/g1/hand_cmd` (`JointState`, any subset of the 14 arm /
+14 Dex3 joints, hold-last) → arm and Dex3 finger position targets.
+`/g1/joint_states` carries position, velocity and effort for all 43 joints.
+
+**Robot:** G1 29-DoF + Dex3 hands (`assets/robot/g1_29_dex3/`, download URL in
+`g1_sim.g1_robot.DEX3_USD_URL`; the IsaacLab `G129_CFG_WITH_DEX3_BASE_FIX`
+asset). `load_g1` removes its world weld (floating base for WBC) and
+re-authors `mid360_joint` from the current Unitree rev 1.0 URDF (inverted
+Mid-360). Dex3 fingertip sensing and the TacSL roadmap:
+[`docs/TACSL_PLAN.md`](docs/TACSL_PLAN.md); `scripts/test_dex3_contacts.py`
+checks all 6 tip sensors headless. The matching URDF (`assets/` is
+git-ignored) comes from Unitree:
+`gh api -H "Accept: application/vnd.github.raw" "repos/unitreerobotics/unitree_ros/contents/robots/g1_description/g1_29dof_with_hand_rev_1_0.urdf" > assets/robot/g1_29/g1_29dof_with_hand_rev_1_0.urdf`
+(its hand meshes are already in `assets/robot/g1_29/meshes`).
 
 ---
 
@@ -259,6 +275,7 @@ without re-running the checks below.**
 | RViz (Fixed Frame `World`) | |
 |---|---|
 | ![overview](screenshots/tf_fix/rviz_overview.png) | ![side](screenshots/tf_fix/rviz_side.png) |
+| ![dex3](screenshots/tf_fix/rviz_dex3_overview.png) | Dex3 G1 (43 DOF) with the same sensor stack, verified 11/11. |
 | ![top](screenshots/tf_fix/rviz_top.png) | Top view: non-repetitive Mid-360 ground coverage, head/faceplate shadow wedges, D435 depth in the forward gap. Side view: flat floor, vertical walls, nothing on the ceiling. |
 
 | Check (`scripts/verify_sensor_tf.py`) | Result |

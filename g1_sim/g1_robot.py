@@ -118,7 +118,20 @@ IMU_DATASHEET = {
 
 # URDF-cleared spawn pose: z=0.8 matches the warehouse's proven standing
 # height (spawn_g1) and works with the WBC Balance policy's 0.74 m target.
-DEFAULT_USD = Path(__file__).resolve().parent.parent / "assets/g1_29dof_sensors.usd"
+# Unitree G1 29-DoF + Dex3 hands (rev 1.0 URDF), the asset IsaacLab's
+# G129_CFG_WITH_DEX3_BASE_FIX uses; load_g1 un-welds its fixed base.
+DEX3_USD_URL = (
+    "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/Healthcare/0.5.0/132c82d"
+    "/Robots/UnitreeG1/g1_29dof_with_dex3_base_fix/g1_29dof_with_dex3_base_fix.usd"
+)
+DEFAULT_USD = Path(__file__).resolve().parent.parent / "assets/robot/g1_29_dex3/g1_29dof_with_dex3_base_fix.usd"
+# Matching URDF (same rev 1.0 kinematics + Dex3 hands) for /robot_description.
+DEFAULT_URDF = Path(__file__).resolve().parent.parent / "assets/robot/g1_29/g1_29dof_with_hand_rev_1_0.urdf"
+# mid360_joint in unitree_ros g1_29dof_with_hand_rev_1_0.urdf (current): the
+# Mid-360 is mounted inverted with a slight pitch. The Dex3 USD above carries
+# an older upright version, so load_g1 re-authors the joint to match.
+MID360_JOINT_XYZ = (0.0002835, 0.00003, 0.428434)
+MID360_JOINT_RPY = (3.141592653589793, 0.05112069379091391, 0.0)
 
 
 @dataclass
@@ -134,6 +147,9 @@ class G1Robot:
     _lidar_pub: object | None = None
     _rgbd_pub: object | None = None
     _pattern_cycler: object | None = None
+    _tip_pub: object | None = None
+    _description_node: object | None = None
+    tip_contacts: dict[str, str] = field(default_factory=dict)
 
     def step(self, current_time: float) -> int:
         """Advance sensor publishing; call once per sim step.
@@ -150,23 +166,78 @@ class G1Robot:
             self._lidar_pub.spin_once()
         if self._rgbd_pub is not None:
             self._rgbd_pub.publish(current_time)
+        if self._tip_pub is not None:
+            self._tip_pub.publish(current_time)
         return sent
 
     def destroy(self) -> None:
         """Tear down rclpy-backed publishers (idempotent)."""
-        for pub in (self._lidar_pub, self._rgbd_pub):
+        for pub in (self._lidar_pub, self._rgbd_pub, self._tip_pub):
             if pub is None:
                 continue
             try:
                 pub.destroy()
             except Exception:
                 pass  # rclpy already down or double-destroy
-        self._lidar_pub = self._rgbd_pub = None
+        self._lidar_pub = self._rgbd_pub = self._tip_pub = None
+        if self._description_node is not None:
+            self._description_node.destroy_node()
+            self._description_node = None
+
+
+def _publish_robot_description(urdf_path: Path):
+    """Latch the URDF on /robot_description (transient-local, like
+    robot_state_publisher) with mesh paths rewritten to file:// URIs so RViz
+    resolves them without a ROS package. /tf comes from the sim itself."""
+    from rclpy.node import Node
+    from rclpy.qos import QoSDurabilityPolicy, QoSProfile
+    from std_msgs.msg import String
+
+    text = urdf_path.read_text().replace('filename="meshes/', f'filename="file://{urdf_path.parent}/meshes/')
+    node = Node("g1_robot_description")
+    qos = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+    node.create_publisher(String, "/robot_description", qos).publish(String(data=text))
+    print(f"[G1] description     : {urdf_path.name} -> /robot_description (latched)")
+    return node
+
+
+def _align_mid360_mount(stage, robot) -> None:
+    """Author mid360_joint (and mid360_link's initial pose) from the current
+    Unitree URDF so the lidar frame and its built-in IMU match the real robot."""
+    import math
+
+    from pxr import Gf, Usd, UsdGeom, UsdPhysics
+
+    joint = next((p for p in Usd.PrimRange(robot) if p.GetName() == "mid360_joint"), None)
+    if joint is None:
+        return
+    j = UsdPhysics.Joint(joint)
+    roll, pitch, yaw = (math.degrees(a) for a in MID360_JOINT_RPY)
+    # URDF rpy = fixed-axis X, then Y, then Z (row vectors: Rx * Ry * Rz).
+    rot = (Gf.Rotation(Gf.Vec3d(1, 0, 0), roll) * Gf.Rotation(Gf.Vec3d(0, 1, 0), pitch)
+           * Gf.Rotation(Gf.Vec3d(0, 0, 1), yaw))
+    q = rot.GetQuat()
+    j.CreateLocalPos0Attr().Set(Gf.Vec3f(*MID360_JOINT_XYZ))
+    j.CreateLocalRot0Attr().Set(Gf.Quatf(q.GetReal(), Gf.Vec3f(q.GetImaginary())))
+    parent = stage.GetPrimAtPath(j.GetBody0Rel().GetTargets()[0])
+    child = stage.GetPrimAtPath(j.GetBody1Rel().GetTargets()[0])
+    # Keep the body's initial pose consistent with the joint (both are
+    # authored relative to the robot root, like every link in this USD).
+    cache = UsdGeom.XformCache()
+    root_w = cache.GetLocalToWorldTransform(robot)
+    parent_rel = cache.GetLocalToWorldTransform(parent) * root_w.GetInverse()
+    child_rel = Gf.Matrix4d().SetTransform(rot, Gf.Vec3d(*MID360_JOINT_XYZ)) * parent_rel
+    ops = {op.GetOpName(): op for op in UsdGeom.Xformable(child).GetOrderedXformOps()}
+    ops["xformOp:translate"].Set(child_rel.ExtractTranslation())
+    cq = child_rel.ExtractRotationQuat()
+    ops["xformOp:orient"].Set(Gf.Quatd(cq.GetReal(), cq.GetImaginary()))
+    print(f"[G1] mid360 mount    : {MID360_JOINT_XYZ} rpy {MID360_JOINT_RPY} (unitree_ros rev 1.0)")
 
 
 def load_g1(
     prim_path: str = "/World/G1",
     usd_path: str | Path | None = None,
+    urdf_path: str | Path | None = None,
     translation: tuple[float, float, float] = (0.0, 0.0, 0.8),
     yaw_deg: float = 0.0,
     *,
@@ -177,6 +248,7 @@ def load_g1(
     imu_torso: bool = True,
     imu_lidar: bool = True,
     imu_camera: bool = True,
+    hand_contacts: bool = True,     # Dex3 fingertip contact sensors
     # --- publishing ---
     ros2: bool = True,
     robot_state: bool = True,        # /tf + /g1/joint_states + /clock
@@ -188,9 +260,9 @@ def load_g1(
     lidar_config_dir: str | Path | None = None,
     # DO NOT CHANGE the lidar/camera mount defaults without re-running
     # scripts/verify_sensor_tf.py - verified 2026-09-23, frames recorded in
-    # docs/tf_snapshot_20260923.yaml. -0.15 in the (180 deg rolled)
-    # mid360_link = +15 cm world-up: lower and the head mesh swallows the
-    # downward rays (-0.03 kept ~5% of them).
+    # docs/tf_snapshot_20260923.yaml. Relative to the inverted mid360_link:
+    # -0.15 = +15 cm world-up; lower and the head mesh swallows the downward
+    # rays (-0.03 kept ~5% of them).
     lidar_translation: tuple[float, float, float] = (0.0, 0.0, -0.15),
     lidar_orientation: tuple[float, float, float, float] | None = None,
     lidar_num_prims: int = 0,         # 0 = all
@@ -206,11 +278,13 @@ def load_g1(
 
     Args:
         prim_path: where to instance the robot.
-        usd_path: robot USD; defaults to the package's baked sensors asset.
+        usd_path: robot USD; defaults to the Dex3 G1 asset (DEFAULT_USD).
+        urdf_path: URDF latched on /robot_description for RViz (needs ros2);
+            defaults to the matching Dex3 URDF (DEFAULT_URDF).
         translation: world spawn position of the robot root.
         yaw_deg: spawn heading about world Z (counter-clockwise, degrees).
-        camera, lidar, imu_pelvis, imu_torso, imu_lidar, imu_camera:
-            per-sensor switches, all True.
+        camera, lidar, imu_pelvis, imu_torso, imu_lidar, imu_camera,
+        hand_contacts: per-sensor switches, all True.
         ros2: master switch - False skips every ROS2 graph/publisher (and any
             rclpy import), for IsaacLab training or pure-viewport use.
         robot_state: publish /tf, /g1/joint_states, /clock (needs ros2).
@@ -239,7 +313,7 @@ def load_g1(
 
     usd_path = Path(usd_path) if usd_path else DEFAULT_USD
     if not usd_path.exists():
-        raise SystemExit(f"[G1] {usd_path} not found - run scripts/convert_g1_urdf_to_usd.py")
+        raise SystemExit(f"[G1] {usd_path} not found - download it: curl -o {usd_path} {DEX3_USD_URL}")
 
     stage = omni.usd.get_context().get_stage()
     handle = G1Robot(prim_path=prim_path)
@@ -271,6 +345,27 @@ def load_g1(
         raise SystemExit(f"[G1] {prim_path}/pelvis missing - reference did not resolve")
     print(f"[G1] loaded          : {usd_path.name} @ {prim_path}  pose={translation}")
 
+    # The Dex3 asset (g1_29dof_with_dex3_base_fix) welds the pelvis to the
+    # world with root_joint and roots the articulation there; WBC needs a
+    # floating base, so drop the weld and root the articulation at the pelvis.
+    from pxr import PhysxSchema, Usd, UsdPhysics
+
+    welds = [
+        p for p in Usd.PrimRange(robot)
+        if p.IsA(UsdPhysics.FixedJoint) and not UsdPhysics.Joint(p).GetBody0Rel().GetTargets()
+    ]
+    for prim in welds:
+        weld_attrs = {a.GetName(): a.Get() for a in prim.GetAttributes() if a.GetName().startswith("physxArticulation:")}
+        prim.SetActive(False)
+        UsdPhysics.ArticulationRootAPI.Apply(pelvis)
+        PhysxSchema.PhysxArticulationAPI.Apply(pelvis)
+        for name, value in weld_attrs.items():
+            if value is not None:
+                pelvis.GetAttribute(name).Set(value)
+        print(f"[G1] floating base   : deactivated world weld {prim.GetPath()}")
+
+    _align_mid360_mount(stage, robot)
+
     if create_articulation:
         from isaacsim.core.prims import Articulation
 
@@ -296,6 +391,7 @@ def load_g1(
         graph = attach_robot_state_publishers(prim_path)
         handle.ros_graphs.append(graph)
         print(f"[G1] state graph     : {graph}  (/tf, /g1/joint_states, /clock)")
+        handle._description_node = _publish_robot_description(Path(urdf_path) if urdf_path else DEFAULT_URDF)
 
     # ---- IMUs: one sensor prim + one publish graph each ----
     imu_specs: list[tuple[str, str, bool]] = [
@@ -334,12 +430,23 @@ def load_g1(
             handle.ros_graphs.append(legacy)
         print(f"[G1] imu {name:<8}: {spec['topic']:<24} frame={spec['frame']}  ({spec['chip']})")
 
+    # ---- Dex3 fingertip contacts ----
+    if hand_contacts:
+        from g1_sim.dex3_contacts import TipContactPublisher, spawn_tip_contacts
+
+        handle.tip_contacts = spawn_tip_contacts(prim_path)
+        if handle.tip_contacts and ros2:
+            handle._tip_pub = TipContactPublisher(handle.tip_contacts)
+        print(f"[G1] tip contacts    : {len(handle.tip_contacts)} Dex3 fingertips -> /g1/dex3/<side>/<finger>/contact")
+
     # ---- D435 camera ----
     if camera:
         handle.camera_prim = spawn_camera(f"{prim_path}/torso_link", width=camera_width, height=camera_height)
         print(f"[G1] camera prim     : {handle.camera_prim}  ({camera_width}x{camera_height})")
         if ros2:
-            graph = attach_camera_publishers(handle.camera_prim, width=camera_width, height=camera_height)
+            graph = attach_camera_publishers(
+                handle.camera_prim, f"{prim_path}/d435_link", width=camera_width, height=camera_height
+            )
             handle.ros_graphs.append(graph)
             print(f"[G1] camera graph    : {graph}  (/g1/camera/{{rgb,depth,depth/points,semantic,camera_info}})")
             if depth_colorized:
@@ -356,18 +463,14 @@ def load_g1(
         kwargs: dict = {}
         if lidar_config_dir is not None:
             kwargs["config_dir"] = Path(lidar_config_dir)
-        prim_paths = spawn_mid360(
-            mount,
-            translation=lidar_translation,
-            # Identity: mid360_link already carries the URDF's 180 deg roll.
-            # A second roll here flips the sensor upright (ceiling cloud).
-            orientation=lidar_orientation if lidar_orientation is not None else (1.0, 0.0, 0.0, 0.0),
-            **kwargs,
-        )
+        sensor_t = tuple(lidar_translation)
+        # Identity: mid360_link carries the inverted mount (see MID360_JOINT_RPY).
+        sensor_q = tuple(lidar_orientation or (1.0, 0.0, 0.0, 0.0))
+        prim_paths = spawn_mid360(mount, translation=sensor_t, orientation=sensor_q, **kwargs)
         if lidar_num_prims and lidar_num_prims < len(prim_paths):
             prim_paths = prim_paths[:lidar_num_prims]
         handle.lidar_prims = prim_paths
-        print(f"[G1] lidar prims     : {len(prim_paths)}  (mount {mount}, offset {lidar_translation} in mid360_link)")
+        print(f"[G1] lidar prims     : {len(prim_paths)}  (mount {mount}, pose in link t={tuple(round(v, 4) for v in sensor_t)} q={tuple(round(v, 4) for v in sensor_q)})")
         scan_type = stage.GetPrimAtPath(prim_paths[0]).GetAttribute("omni:sensor:Core:scanType").Get()
         if scan_type == "SOLID_STATE" and len(prim_paths) == 1:
             handle._pattern_cycler = ScanPatternCycler(prim_paths[0])
@@ -388,7 +491,8 @@ def load_g1(
                 topic=lidar_topic,
                 publish_rate=10.0,
                 max_points=lidar_max_points,
-                sensor_offset=lidar_translation,
+                sensor_offset=sensor_t,
+                sensor_rotation=sensor_q,
             )
             print(f"[G1] lidar publisher : rclpy -> {handle._lidar_pub.topics}")
 
