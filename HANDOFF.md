@@ -133,6 +133,9 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 - `scripts/unifolm_ws_server.py` now provides a lazy, unloadable EEF23 adapter.
   It requires an explicit 23-D EEF/base state and intentionally does not guess
   EEF poses from joint angles.
+- GR00T's observation builder now passes the 14 Dex3 hand joints from
+  `/g1/joint_states` into its `left_hand`/`right_hand` model inputs; the joint
+  contract test covers this.
 - The Dex3-capable robot USD and contact/TF changes are staged for this
   checkpoint. `g1_robot.py` now defaults to
   `assets/robot/g1_29_dex3/g1_29dof_with_dex3_base_fix.usd`, publishes 43

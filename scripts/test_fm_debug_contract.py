@@ -8,11 +8,17 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from scripts.gr00t_ws_server import ARM_JOINTS, _action_to_arm_trajectory  # noqa: E402
+from scripts.gr00t_ws_server import (  # noqa: E402
+    ARM_JOINTS,
+    DEX3_HAND_JOINTS,
+    _action_to_arm_trajectory,
+    _build_observation,
+)
 
 
 def main() -> None:
@@ -26,6 +32,13 @@ def main() -> None:
     assert trajectory.shape == (40, 14)
     assert np.allclose(trajectory[0, :7], current[:7] + 0.01)
     assert np.allclose(trajectory[-1, :7], current[:7] + 0.4)
+
+    modality = {"video": SimpleNamespace(modality_keys=["ego_view"])}
+    joint_names = ARM_JOINTS + DEX3_HAND_JOINTS
+    joint_positions = [0.0] * len(ARM_JOINTS) + [0.1] * len(DEX3_HAND_JOINTS)
+    observation = _build_observation(modality, None, joint_names, joint_positions)
+    assert np.allclose(observation["state"]["left_hand"], 0.1)
+    assert np.allclose(observation["state"]["right_hand"], 0.1)
     print("FM debug contract: OK")
 
 

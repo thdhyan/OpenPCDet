@@ -52,6 +52,11 @@ ARM_JOINTS = [
     "right_shoulder_pitch_joint", "right_shoulder_roll_joint", "right_shoulder_yaw_joint",
     "right_elbow_joint", "right_wrist_roll_joint", "right_wrist_pitch_joint", "right_wrist_yaw_joint",
 ]
+DEX3_HAND_JOINTS = [
+    f"{side}_hand_{finger}_joint"
+    for side in ("left", "right")
+    for finger in ("thumb_0", "thumb_1", "thumb_2", "index_0", "index_1", "middle_0", "middle_1")
+]
 
 
 def _default_policy_factory(model_path: str, device: str = "cpu"):
@@ -104,16 +109,17 @@ def _build_observation(mc, rgb_np: np.ndarray | None, joint_names: list[str],
     left_eef = _eef_9d(arm_l)
     right_eef = _eef_9d(arm_r)
 
-    # hand = 7-D: G1's rubber_hand is 1 DOF; the model's left_hand/right_hand
-    # is 7-D per modstats. For the hold test set gripper closed-ish (grip on).
-    def _hand_7() -> np.ndarray:
-        return np.zeros(7, dtype=np.float32)
+    # Dex3 supplies the model's seven hand joints directly.  Older hand-only
+    # G1 checkpoints may omit these names, in which case zeros remain a valid
+    # neutral fallback rather than an invented finger conversion.
+    hand_l = np.array([by_name.get(n, 0.0) for n in DEX3_HAND_JOINTS[:7]], dtype=np.float32)
+    hand_r = np.array([by_name.get(n, 0.0) for n in DEX3_HAND_JOINTS[7:]], dtype=np.float32)
 
     state = {
         "left_wrist_eef_9d": left_eef[None, None, :],    # (1,1,9)
         "right_wrist_eef_9d": right_eef[None, None, :],
-        "left_hand": _hand_7()[None, None, :],
-        "right_hand": _hand_7()[None, None, :],
+        "left_hand": hand_l[None, None, :],
+        "right_hand": hand_r[None, None, :],
         "left_arm": arm_l[None, None, :],               # (1,1,7)
         "right_arm": arm_r[None, None, :],
         "waist": waist[None, None, :],                  # (1,1,3)
@@ -295,11 +301,19 @@ async def handle(ws, path=None, server=None):
     print(f"[WS] connection {client} closed", flush=True)
 
 
+def _default_device() -> str:
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=os.path.expanduser(
         "~/foundation_models/GR00T-N1.7-3B"))
-    ap.add_argument("--device", default="cpu")
+    ap.add_argument("--device", default=_default_device())
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8765)
     args = ap.parse_args()
