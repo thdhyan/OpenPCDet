@@ -262,13 +262,13 @@ async def _handle(ws, server: UnifoLMServer):
                 message = json.loads(raw)
                 kind = message.get("type")
                 if kind == "load":
-                    server.load()
+                    await asyncio.to_thread(server.load)
                     await ws.send(json.dumps({"type": "status", "loaded": True, "state_dim": STATE_DIM}))
                 elif kind == "unload":
-                    server.unload()
+                    await asyncio.to_thread(server.unload)
                     await ws.send(json.dumps({"type": "status", "loaded": False}))
                 elif kind == "obs":
-                    response = server.infer(message)
+                    response = await asyncio.to_thread(server.infer, message)
                     await ws.send(json.dumps(response))
                 else:
                     await ws.send(json.dumps({"type": "status", "loaded": server.loaded}))
