@@ -1,0 +1,14 @@
+rosbridge_websocket:
+  ros__parameters:
+    port: 9091
+    topics_pub_glob: "[]"
+    topics_sub_glob: ""
+    services_glob: "['/rosapi/*']"
+    params_glob: "[]"
+
+rosapi:
+  ros__parameters:
+    topics_pub_glob: "[]"
+    topics_sub_glob: ""
+    services_glob: "['/rosapi/*']"
+    params_glob: "[]"
