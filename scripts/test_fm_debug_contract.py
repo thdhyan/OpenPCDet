@@ -18,6 +18,7 @@ from scripts.gr00t_ws_server import (  # noqa: E402
     DEX3_HAND_JOINTS,
     _action_to_arm_trajectory,
     _build_observation,
+    Gr00tArmServer,
 )
 
 
@@ -39,6 +40,9 @@ def main() -> None:
     observation = _build_observation(modality, None, joint_names, joint_positions)
     assert np.allclose(observation["state"]["left_hand"], 0.1)
     assert np.allclose(observation["state"]["right_hand"], 0.1)
+    server = Gr00tArmServer("unused", "cpu")
+    server.unload()
+    assert server._policy is None
     print("FM debug contract: OK")
 
 

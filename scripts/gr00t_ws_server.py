@@ -228,6 +228,19 @@ class Gr00tArmServer:
             "dispatch": "explicit_ui_approval_required",
         }
 
+    def unload(self) -> None:
+        """Release model weights while keeping the WebSocket service alive."""
+        self._policy = None
+        self._mc = None
+        self._hold_count = 0
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        print("[GR00T] unloaded", flush=True)
+
     def current_targets(self) -> list[float]:
         return self._current_arm.tolist()
 
@@ -246,7 +259,16 @@ async def handle(ws, path=None, server=None):
     try:
         async for raw in ws:
             msg = json.loads(raw)
+            if msg.get("type") == "load":
+                _ = server.policy
+                await ws.send(json.dumps({"type": "status", "loaded": True}))
+                continue
+            if msg.get("type") == "unload":
+                server.unload()
+                await ws.send(json.dumps({"type": "status", "loaded": False}))
+                continue
             if msg.get("type") != "obs":
+                await ws.send(json.dumps({"type": "status", "loaded": server._policy is not None}))
                 continue
             t = msg.get("t", 0.0)
             rgb_b64 = msg.get("rgb")

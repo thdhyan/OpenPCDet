@@ -123,7 +123,9 @@ The model selector includes:
 - Cosmos3-Edge / Cosmos3-Nano video placeholders
 
 UnifoLM and Cosmos services are lazy/optional: selecting a model does not load
-weights until that model's inference service receives a request.
+weights until that model's inference service receives a request. Both the
+GR00T and UnifoLM WebSocket services accept explicit `{"type":"unload"}` and
+release their model weights without restarting the listener.
 
 The optional UnifoLM adapter is `scripts/unifolm_ws_server.py`. The published
 Unitree checkpoint expects a 23-D EEF/base state and returns a 23-D EEF action

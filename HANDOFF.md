@@ -144,9 +144,10 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
   panel that marks Dex3 frames. This still needs a live ROS 2 run test.
 - The model selector now includes UnifoLM-VLA, but no UnifoLM inference process
   is active yet. GR00T remains the only implemented model server.
-- Model loading is lazy for GR00T and UnifoLM's adapter. The UnifoLM process
-  accepts explicit `load`/`unload` messages, but a cross-model supervisor and
-  automatic idle eviction are still pending.
+- Model loading is lazy for GR00T and UnifoLM's adapter. Both WebSocket
+  services accept explicit `{"type":"unload"}` and release weights without
+  restarting their listeners; a cross-model supervisor and automatic idle
+  eviction are still pending.
 
 The older sections below preserve prior experiments; where they conflict with
 this checkpoint, use the checkpoint and resume order above.
