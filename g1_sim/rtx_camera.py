@@ -29,8 +29,23 @@ from __future__ import annotations
 #   +X = forward (away from robot body)
 #   +Z = up in torso frame (camera sits higher on the head)
 # The pitch angle is preserved so the boresight still points ~47.6° downward.
+D435_URDF_POS = (0.0576235, 0.01753, 0.41987)
 D435_POS = (0.1576235, 0.01753, 0.51987)  # URDF (0.058, 0.018, 0.420) + (0.10, 0.0, 0.10) clearance
 D435_PITCH_RAD = 0.8307767239493009  # ~47.6° downward tilt — unchanged
+
+
+def _optical_offset_in_link() -> tuple[float, float, float]:
+    """Clearance offset (D435_POS - D435_URDF_POS, torso frame) expressed in
+    d435_link's frame, i.e. rotated by the inverse of the link's pitch.
+
+    /tf places d435_link at the URDF position, but the camera prim renders
+    from D435_POS - without this the depth clouds land ~14 cm off.
+    """
+    import math
+
+    dx, dy, dz = (p - u for p, u in zip(D435_POS, D435_URDF_POS))
+    c, s = math.cos(D435_PITCH_RAD), math.sin(D435_PITCH_RAD)
+    return (c * dx - s * dz, dy, s * dx + c * dz)
 
 TOPIC_RGB = "/g1/camera/rgb"
 TOPIC_DEPTH = "/g1/camera/depth"
@@ -91,7 +106,9 @@ def spawn_camera(
     # ~69 deg horizontal FOV, matching the D435.
     camera.CreateFocalLengthAttr(1.93)
     camera.CreateHorizontalApertureAttr(2.682)
-    camera.CreateVerticalApertureAttr(1.509)
+    # Renderer assumes square pixels, so vertical aperture must follow the
+    # render aspect (1.509 = 16:9 gave CameraInfo fy=613.9 vs rendered 460.6).
+    camera.CreateVerticalApertureAttr(2.682 * height / width)
     camera.CreateClippingRangeAttr(Gf.Vec2f(0.1, 30.0))
 
     xform = UsdGeom.Xformable(camera)
@@ -194,6 +211,7 @@ def attach_camera_publishers(
         ("CameraInfo.inputs:frameId", frame_id),
         ("OpticalTF.inputs:parentFrameId", CAMERA_FRAME),
         ("OpticalTF.inputs:childFrameId", OPTICAL_FRAME),
+        ("OpticalTF.inputs:translation", list(_optical_offset_in_link())),
         ("OpticalTF.inputs:rotation", list(OPTICAL_QUAT_IJKR)),
         ("OpticalTF.inputs:topicName", "/tf_static"),
         ("OpticalTF.inputs:staticPublisher", True),
@@ -205,6 +223,9 @@ def attach_camera_publishers(
         # depth_pcl reuses the same render product to also emit a
         # sensor_msgs/PointCloud2 straight from the depth buffer - no extra
         # render pass, just another ROS2CameraHelper reading it differently.
+        # Like rgb/depth, it emits in the optical convention, so it takes the
+        # same frame_id (OPTICAL_FRAME) and OpticalTF static transform as
+        # everything else - no separate "d435_camera" TF frame needed.
         ("DepthPoints", "depth_pcl", TOPIC_DEPTH_POINTS),
         ("Semantic", "semantic_segmentation", TOPIC_SEMANTIC),
     ):

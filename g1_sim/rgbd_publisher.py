@@ -42,7 +42,6 @@ class RgbdPointCloudPublisher:
         height: int = 480,
         focal_length: float = 1.93,
         horizontal_aperture: float = 2.682,
-        vertical_aperture: float = 1.509,
         max_range_m: float = 20.0,
         stride: int = 2,
         topic: str = "/g1/camera/depth/color/points",
@@ -64,7 +63,8 @@ class RgbdPointCloudPublisher:
         # Same pinhole convention ROS2CameraInfoHelper uses internally, so
         # this cloud's geometry matches what /g1/camera/camera_info implies.
         self.fx = width * focal_length / horizontal_aperture
-        self.fy = height * focal_length / vertical_aperture
+        # Renderer assumes square pixels (vertical aperture is ignored).
+        self.fy = self.fx
         self.cx = width / 2.0
         self.cy = height / 2.0
 
