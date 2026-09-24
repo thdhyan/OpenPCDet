@@ -20,7 +20,7 @@ RUN mkdir -p /src && cd /src && \
 WORKDIR /src
 RUN pnpm install --frozen-lockfile --ignore-scripts \
     && pnpm build \
-    && pnpm --filter @agenticros/agenticros-claude-code deploy --prod /opt/agenticros-mcp
+    && pnpm --filter @agenticros/claude-code deploy --prod /opt/agenticros-mcp
 
 COPY agenticros-config.json /root/.agenticros/config.json
 RUN mkdir -p /root/.agenticros
