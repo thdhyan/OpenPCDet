@@ -115,7 +115,8 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
   pushed.
 - Verified offline URDF preview URL:
   `http://10.131.37.135:8080/?demo=1&view=3d-view`
-- The Spark02 UI process is running and the browser smoke test passed.
+- The Spark02 UI process is running (PID/log in `~/fm-ui.pid` and
+  `~/fm-debug-ui.log`) and the browser smoke test passed.
 - No Docker container has been started yet for the real Isaac Sim + model stack.
 
 ### New checkpoint — server, GPU venv, HF access, Dex3/TF work
@@ -128,9 +129,10 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 - The current local Hugging Face credential was forwarded to Spark02 through
   SSH stdin only; `hf auth whoami` returned `Thakk100`. The token is not stored
   in the repository, Docker files, or command arguments.
-- GR00T N1.7 is live on Spark02 at `:8765`. The service loaded in ~12–15s,
-  fell back to SDPA because the available aarch64 FlashAttention wheel is
-  CUDA-12-linked, and returned a verified 40-step synthetic inference preview.
+- GR00T N1.7 is live on Spark02 at `:8765` (PID/log are in
+  `~/gr00t_ws_server.pid` and `~/gr00t_ws_server.log`). The service loaded in
+  ~12–15s, fell back to SDPA because the available aarch64 FlashAttention wheel
+  is CUDA-12-linked, and returned a verified 40-step synthetic inference preview.
 - The UnifoLM-VLA action checkpoint and 16+ GB `UnifoLM-VLM-Base` companion are
   downloaded on Spark02. The official dependencies and editable package are
   installed; `baseframework` and `qwen_vl_utils` import successfully.
