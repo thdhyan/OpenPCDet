@@ -319,14 +319,22 @@ language: annotation.human.task_description
 ### Resume Commands (Foundation Models)
 
 ```bash
-# On spark02: start GR00T WebSocket server
-ssh aim_spark02
-pkill -9 -f gr00t_ws_server  # clean up any old
-nohup ~/venvs/gr00t/bin/python ~/gr00t_ws_server.py \
-  --model ~/foundation_models/GR00T-N1.7-3B --port 8765 \
-  > ~/gr00t_ws_server.log 2>&1 &
+# On spark02: GR00T N1.7 is already running; restart only if needed.
+cd ~/Projects/fm-debug-ui
+nohup env HF_TOKEN="$HF_TOKEN" PYTHONPATH="$HOME/Isaac-GR00T" \
+  ~/venvs/gr00t/bin/python -u scripts/gr00t_ws_server.py \
+  --model ~/foundation_models/GR00T-N1.7-3B --device cuda --port 8765 \
+  > ~/gr00t_ws_server.log 2>&1 </dev/null &
 
-# On laptop: start warehouse sim (Dex3 G1, table + steering wheel, Mid-360 solid pattern by default)
+# On spark02: UnifoLM is lazy; start the listener without loading weights.
+# It requires an explicit 23-D EEF/base state on each observation.
+PYTHONPATH=$HOME/UnifoLM-VLA/src nohup ~/venvs/gr00t/bin/python -u \
+  scripts/unifolm_ws_server.py \
+  --ckpt ~/foundation_models/UnifoLM-VLA-Base/checkpoints/pytorch_model.pt \
+  --vlm ~/foundation_models/UnifoLM-VLM-Base --attention sdpa --port 8767 \
+  > ~/unifolm_ws_server.log 2>&1 </dev/null &
+
+# On laptop: start warehouse sim (Dex3 G1, table + steering wheel)
 cd /home/thakk100/Projects/thesis/G1_sim
 tmux new-session -d -s g1sim "bash -c 'set -a; source .envrc; set +a; python -u scripts/g1_warehouse_sim.py --headless --wbc-mode internal --no-ira > /tmp/opencode/warehouse.log 2>&1'"
 # RViz (robot_description comes from the sim):
@@ -338,16 +346,17 @@ source .envrc
 python scripts/ws_sensor_bridge.py \
   --host 10.131.37.135 --port 8765 \
   --text-cmd "pick up the steering wheel" --rate 5
+# For UnifoLM, add --eef-state with 23 values from a validated FK/TF producer.
 ```
 
 ### Current Bridge Status
 
-- ✅ WebSocket connection establishes (spark02:8765 reachable at 10.131.37.135)
-- ✅ GR00T policy loads (3B params on CPU, ~12s load time)
-- ⚠️ **Known issue**: RGB frame size exceeds websocket max_size (1MB default)
-  - Fix applied: `max_size=10*1024*1024` in `gr00t_ws_server.py`
-- ⚠️ **Known issue**: `server` variable captured in closure for handler
-  - Fix applied: pass `server` explicitly in `handler_wrapper`
+- ✅ Spark02 GR00T WebSocket service is reachable at `10.131.37.135:8765`.
+- ✅ GR00T N1.7 loads on CUDA in ~12–15 seconds and returns a 40-step preview.
+- ✅ RGB/base64 transport has a 10 MB WebSocket limit in the GR00T server.
+- ✅ Explicit `load`/`unload` messages release model weights without restarting.
+- ⚠️ UnifoLM `:8767` assets/dependencies are ready, but its GPU load is waiting
+  for the active Ollama GPU workload to finish; it has not produced an action yet.
 
 ### Arm Override Architecture (Decoupled from WBC)
 
