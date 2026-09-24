@@ -9,13 +9,13 @@ python -u scripts/g1_warehouse_sim.py --headless --wbc-mode internal --env <name
   [--log-props] [--capture-dir DIR] [--caption DIR] [--capture-step N]
 ```
 
-| `--env` | Scene | IRA |
-|---|---|---|
-| `tabletop_wheel` (default) | 1. packing table + steering wheel (IsaacLab locomanip pose) | off |
-| `tabletop_cluster` | 2. table + wheel, red/green/blue cubes, mug, soup can, mustard bottle, banana, foam brick | off |
-| `nav_people` | 3. warehouse, walking IRA people | on |
-| `nav_people_boxes` | 4. env 3 + one big and one small box in front of the robot | on |
-| `nav_people_forearm_box` | 5. env 3 + a box attached to the forearms | on |
+| `--env` | Scene | IRA | Captures |
+|---|---|---|---|
+| `tabletop_wheel` (default) | 1. packing table + steering wheel (IsaacLab locomanip pose) | off | 4 views |
+| `tabletop_cluster` | 2. table + wheel, red/green/blue cubes, mug, soup can, mustard bottle, banana, foam brick | off | 4 views |
+| `nav_people` | 3. warehouse, walking IRA people | on | 6 views |
+| `nav_people_boxes` | 4. env 3 + one big and one small box in front of the robot | on | 6 views |
+| `nav_people_forearm_box` | 5. env 3 + a box attached to the forearms | on | 6 views |
 
 - `--log-props` prints the PhysX position of every `/World/Props` rigid body every 300 steps.
 - `--caption DIR` runs Isaac Sim's VLM Scene Caption on the D435 view at `--capture-step`; see
@@ -60,3 +60,12 @@ python -u scripts/g1_warehouse_sim.py --headless --wbc-mode internal --env <name
     container, banana, mustard bottle, mug, soup can, foam brick, steering wheel, and red,
     green, and blue cubes. …"*
   - The scene graph has 12 nodes.
+## Env 3 — warehouse, walking IRA people (discriminating test)
+
+- **Result:** Robot stands stable pelvis_z ≈ 0.72 m for 400+ updates with IRA humans walking nearby. No fall.
+- **Captures:** 6 perspective views saved at --capture-step 300 (`docs/screenshots/envs_20260924/nav_people/`):
+  `isaac_front.png`, `isaac_side.png`, `isaac_overview.png`, `isaac_behind.png`, `isaac_robot.png`, `isaac_top.png`.
+- **Verification:** `verify_sensor_tf.py` — all depth/color floor checks pass; only `lidar nothing below floor` FAIL (pre-existing, unrelated to fall).
+- **Interpretation:** Since env 3 (IRA, no boxes) does not fall, the floor/box obstacles in env 4 are the likely fall cause for env 4. Next: enlarge robot navmesh hole from 0.8×0.8 m to ~1.6 m in `g1_sim/nav_environments.py`.
+
+## Env 1 — steering wheel fix

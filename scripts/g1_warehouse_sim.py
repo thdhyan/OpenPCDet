@@ -70,11 +70,13 @@ import charset_normalizer
 import charset_normalizer.api  # noqa: F401  - pins compiled cd/md/constants
 import charset_normalizer.md
 
+_charinfo = getattr(charset_normalizer.md, "CharInfo", None)
+_mdp = getattr(charset_normalizer.md, "MessDetectorPlugin", None)
 sys.stderr.write(
     f"[cs-audit] PIN pkg={charset_normalizer.__file__} "
     f"md={charset_normalizer.md.__file__} "
-    f"CharInfo={charset_normalizer.md.CharInfo.__basicsize__} "
-    f"MDP={charset_normalizer.md.MessDetectorPlugin.__basicsize__}\n"
+    f"CharInfo={getattr(_charinfo, '__basicsize__', 'n/a')} "
+    f"MDP={getattr(_mdp, '__basicsize__', 'n/a')}\n"
 )
 sys.stderr.flush()
 # --- end charset_normalizer forensics --------------------------------------
@@ -120,6 +122,9 @@ parser.add_argument(
     + "; ".join(f"{k}: {v.description}" for k, v in ENVIRONMENTS.items()),
 )
 parser.add_argument("--no-ira", action="store_true", help="Skip IRA humans/carters even for --env presets that use IRA.")
+parser.add_argument("--flat-ground", action="store_true", help="Skip the remote warehouse and use the local validation ground.")
+parser.add_argument("--no-props", action="store_true", help="Skip environment preset props (useful for sensor bring-up).")
+parser.add_argument("--experience", choices=("base", "full"), default="full", help="Isaac Sim experience; use base for a lean headless Spark run.")
 parser.add_argument("--num-humans", type=int, default=None, help="IRA wandering characters (default: the --env preset's). 0 disables the group.")
 parser.add_argument("--num-carters", type=int, default=1, help="IRA wandering Nova Carters. 0 disables the group.")
 parser.add_argument("--ira-seed", type=int, default=42)
@@ -200,21 +205,39 @@ _XR_KIT = _os.path.join(
 if args_cli.xr and not _os.path.exists(_XR_KIT):
     # fallback: try the short name (works on some IsaacSim builds)
     _XR_KIT = "isaacsim.exp.base.xr.vr"
-# Isaac Sim 6.1.0 (Kit 110.3): Kit no longer resolves the bare experience
-# name against the --ext-folder paths ("Can't read isaacsim.exp.full") —
-# same failure the XR branch hit. Pass the full path when it exists.
-_FULL_KIT = _os.path.join(
-    _os.path.dirname(_site.getsitepackages()[0]),  # .venv/lib/python3.12
-    "site-packages/isaacsim/apps/isaacsim.exp.full.kit",
-)
+# Isaac Sim 6.x: Kit no longer resolves the bare experience name against
+# the --ext-folder paths on container images.  Use an explicit path.  The
+# lean base experience is useful on DGX Spark because the full experience
+# autoloads optional animation extensions that are not needed by this sensor
+# bring-up and can abort during Kit startup.
+_EXPERIENCE_CANDIDATES = {
+    "base": (
+        "/isaac-sim/apps/isaacsim.exp.base.kit",
+        "/isaac-sim/kit/apps/isaacsim.exp.base.kit",
+        "isaacsim.exp.base",
+    ),
+    "full": (
+        "/isaac-sim/apps/isaacsim.exp.full.kit",
+        "/isaac-sim/kit/apps/isaacsim.exp.full.kit",
+        _os.path.join(
+            _os.path.dirname(_site.getsitepackages()[0]),
+            "site-packages/isaacsim/apps/isaacsim.exp.full.kit",
+        ),
+        "isaacsim.exp.full",
+    ),
+}
 if args_cli.xr:
     _experience = _XR_KIT
 else:
-    _experience = _FULL_KIT if _os.path.exists(_FULL_KIT) else "isaacsim.exp.full"
+    _experience = next(
+        (path for path in _EXPERIENCE_CANDIDATES[args_cli.experience] if _os.path.exists(path)),
+        _EXPERIENCE_CANDIDATES[args_cli.experience][-1],
+    )
 
 simulation_app = SimulationApp(
     {
         "headless": args_cli.headless,
+        "/renderer/multiGpu/enabled": False,
         # CPU-side LiDAR return buffer — avoids CUDA race (discussion #685).
         # ALSO passed via extra_args below: several /rtx and /app/sensors
         # settings are read at extension-init time, before SimulationApp's
@@ -355,12 +378,16 @@ def build_scene_fallback(stage) -> None:
     """Warehouse with no dynamic actors - used when --no-ira is passed or
     IRA's setup failed."""
     stage.DefinePrim("/World", "Xform")
-    try:
-        resolved = load_environment(stage, WAREHOUSE_USD, "/World/Env")
-        print(f"[WH] environment     : {resolved}")
-    except Exception as e:
-        print(f"[WH] warehouse load failed ({e}), using flat ground")
+    if args_cli.flat_ground:
         build_flat_ground(stage)
+        print("[WH] environment     : local flat ground (--flat-ground)")
+    else:
+        try:
+            resolved = load_environment(stage, WAREHOUSE_USD, "/World/Env")
+            print(f"[WH] environment     : {resolved}")
+        except Exception as e:
+            print(f"[WH] warehouse load failed ({e}), using flat ground")
+            build_flat_ground(stage)
 
 
     for i, (x, y) in enumerate(PEDESTRIANS):
@@ -377,6 +404,8 @@ CAPTURE_VIEWS = [
     ("side", (2.6, 0.3, 1.3), (0.0, 0.3, 0.8), 18.0),
     ("overview", (2.4, -2.2, 2.6), (0.0, 0.3, 0.6), 14.0),
     ("behind", (0.0, -1.5, 1.8), (0.0, 0.6, 0.7), 18.0),
+    ("robot", (0.5, 1.5, 1.0), (0.0, 0.0, 0.8), 24.0),
+    ("top", (0.0, 0.0, 5.0), (0.0, 0.0, 0.5), 24.0),
 ]
 
 
@@ -463,8 +492,10 @@ def main() -> None:
             print(f"[WH] carter cameras  : {stripped} deactivated (keep with --keep-carter-cameras)")
 
     print(f"[WH] env             : {args_cli.env} - {ENV.description}  (IRA {'on' if ira_ok else 'off'})")
-    if ENV.build_props is not None:
+    if ENV.build_props is not None and not args_cli.no_props:
         ENV.build_props(stage)
+    elif args_cli.no_props:
+        print("[WH] props           : skipped (--no-props)")
 
     # G1 always goes on top, regardless of which path built the environment.
     # load_g1 owns the reference + session-layer edit-target dance (rationale
