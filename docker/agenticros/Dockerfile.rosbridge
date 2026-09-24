@@ -1,0 +1,21 @@
+# Minimal ROS 2 Jazzy rosbridge sidecar. It joins the host CycloneDDS graph;
+# it does not start Gazebo or a second robot simulator.
+FROM ros:jazzy-ros-base
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-jazzy-rosbridge-suite \
+    ros-jazzy-rmw-cyclonedds-cpp \
+    ros-jazzy-tf2-ros \
+    ros-jazzy-sensor-msgs \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV ROS_DISTRO=jazzy \
+    RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
+    ROS_DOMAIN_ID=0 \
+    CYCLONEDDS_URI=file:///etc/cyclonedds/cyclonedds.xml
+
+COPY cyclonedds_isaac_ros.xml /etc/cyclonedds/cyclonedds.xml
+
+SHELL ["/bin/bash", "-lc"]
+CMD ["source /opt/ros/jazzy/setup.bash && ros2 launch rosbridge_server rosbridge_websocket_launch.xml"]

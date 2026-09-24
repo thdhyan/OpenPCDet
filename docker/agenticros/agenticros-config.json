@@ -1,0 +1,35 @@
+{
+  "transport": {
+    "mode": "rosbridge"
+  },
+  "rosbridge": {
+    "url": "ws://127.0.0.1:9090",
+    "reconnect": true,
+    "reconnectInterval": 3000
+  },
+  "robot": {
+    "name": "G1",
+    "namespace": "",
+    "cameraTopic": "/g1/camera/rgb"
+  },
+  "robots": [
+    {
+      "id": "g1",
+      "name": "G1",
+      "namespace": "",
+      "cameraTopic": "/g1/camera/rgb",
+      "kind": "arm",
+      "sensors": {
+        "has_realsense": false,
+        "has_lidar": true,
+        "has_arm": true
+      },
+      "capabilities": ["take_snapshot", "measure_depth"]
+    }
+  ],
+  "teleop": {
+    "cameraTopic": "/g1/camera/rgb",
+    "cmdVelTopic": "/g1/cmd_vel",
+    "speedDefault": 0.2
+  }
+}
