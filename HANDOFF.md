@@ -173,9 +173,9 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 - `docker/agenticros/` provides a minimal rosbridge sidecar and an AgenticROS
   MCP image/config. It connects to the existing Isaac Sim graph through
   `ws://127.0.0.1:9091`; it does not start Gazebo or a second simulator. The
-  bridge blocks client topic publishing and limits service calls to `/rosapi/*`
-  (read-only by default). Port 9090 is already occupied by a cockpit service on
-  `dl`.
+  bridge blocks client topic publishing. Service/action tools remain available
+  only to an explicitly attached MCP client and must stay behind the UI approval
+  gate. Port 9090 is already occupied by a cockpit service on `dl`.
 - GPU services have not been started because all four `dl` GPUs are currently
   occupied by unrelated workloads. Run the CPU-only rosbridge profile now;
   start `sim`/`perception` only after selecting a free GPU. The first Isaac ROS

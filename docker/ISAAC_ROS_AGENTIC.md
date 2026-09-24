@@ -65,10 +65,11 @@ docker compose -f docker/docker-compose-isaac-ros.yml \
 The AgenticROS container is configured for the G1 graph through
 `ws://127.0.0.1:9091` (port 9090 is already used by another cockpit service
 on `dl`); its config is in `docker/agenticros/agenticros-config.json`. The
-rosbridge profile blocks client topic publishing (`topics_pub_glob=[]`) and
-allows only `/rosapi/*` service introspection, so the MCP integration is
-read-only by default. It uses rosbridge, not Gazebo, so there is only one
-simulation source: Isaac Sim.
+rosbridge profile blocks client topic publishing (`topics_pub_glob=[]`), so
+AgenticROS cannot inject camera, joint, or command messages through the bridge.
+Service/action tools remain available to an explicitly attached MCP client and
+must not be used for dispatch without the UI approval gate. It uses rosbridge,
+not Gazebo, so there is only one simulation source: Isaac Sim.
 
 ## Validation
 

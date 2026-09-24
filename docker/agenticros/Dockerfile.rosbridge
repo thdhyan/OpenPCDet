@@ -18,4 +18,4 @@ ENV ROS_DISTRO=jazzy \
 COPY cyclonedds_isaac_ros.xml /etc/cyclonedds/cyclonedds.xml
 
 ENTRYPOINT ["/bin/bash", "-lc"]
-CMD ["source /opt/ros/jazzy/setup.bash && exec ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:=9091 topics_pub_glob:=\"[]\" services_glob:=\"['/rosapi/*']\" params_glob:=\"[]\""]
+CMD ["source /opt/ros/jazzy/setup.bash && exec ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:=9091 topics_pub_glob:=\"[]\""]
