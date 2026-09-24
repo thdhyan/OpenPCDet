@@ -20,8 +20,8 @@ from g1_sim.environments import spawn_box
 ROBOT_FOOTPRINT = ((0.0, 0.0), (0.8, 0.8))
 # path, edge length (m), floor xy, mass (kg). Off the front camera's line of
 # sight to the robot (eye (0.4, 2.8)), inside the lidar/D435 field of view.
-BIG_BOX = ("/World/Props/BigBox", 0.8, (0.9, 2.2), 10.0)
-SMALL_BOX = ("/World/Props/SmallBox", 0.3, (-0.4, 1.2), 1.0)
+BIG_BOX = ("/World/Props/BigBox", 0.8, (0.9, 3.5), 10.0)
+SMALL_BOX = ("/World/Props/SmallBox", 0.3, (-0.4, 4.5), 1.0)
 
 # Env 5: box carried on the forearms (G1 link names, see the Dex3 USD).
 FOREARM_LINKS = ("left_elbow_link", "right_elbow_link")
