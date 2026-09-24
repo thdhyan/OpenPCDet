@@ -53,7 +53,10 @@ class WsBridgeNode(Node):
     def __init__(self, arm_topic: str = ARM_CMD_TOPIC, eef_state: list[float] | None = None):
         super().__init__("g1_ws_bridge")
         if eef_state is not None and len(eef_state) != 23:
-            raise ValueError("--eef-state must contain exactly 23 values")
+            raise ValueError(
+                "--eef-state must contain exactly 23 values: left XYZ+6D [9], "
+                "right XYZ+6D [9], waist/base[5]"
+            )
         self.eef_state = list(eef_state) if eef_state is not None else None
         self._last_rgb: Image | None = None
         self._last_joints: JointState | None = None

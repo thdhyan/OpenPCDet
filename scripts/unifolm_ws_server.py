@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Lazy WebSocket adapter for Unitree UnifoLM-VLA.
 
-The checkpoint is a 23-D end-effector policy (left pose, right pose, and five
-waist/base values), not a joint-action policy.  This adapter deliberately keeps
-EEF actions preview-only: joint states may be logged, but they are not silently
-converted to EEF poses or dispatched to the robot.
+The checkpoint is a 23-D end-effector policy: each pose is 9-D (XYZ plus a 6-D
+rotation), followed by five waist/base values.  It is not a joint-action policy.
+This adapter deliberately keeps EEF actions preview-only: joint states may be
+logged, but they are not silently converted to EEF poses or dispatched to the
+robot.
 
 The official Unitree implementation is imported only on the first valid
 observation so the UI/server can start while the large optional model is cold.
@@ -114,15 +115,17 @@ def _bounds_stats(stats: dict[str, Any], normalized: np.ndarray, *, action: bool
 def _state_from_message(message: dict[str, Any]) -> np.ndarray:
     """Read the explicit 23-D EEF state contract.
 
-    Joint names/positions are accepted for logging, but are never guessed into
-    an EEF pose.  A TF/IK producer must provide ``state`` (23 values) or
-    ``eef_state`` in exactly the Unitree layout.
+    Layout: left XYZ + 6-D rotation (9), right XYZ + 6-D rotation (9), then five
+    waist/base values. Joint names/positions are accepted for logging, but are
+    never guessed into an EEF pose. A TF/IK producer must provide ``state``
+    (23 values) or ``eef_state`` in exactly this Unitree layout.
     """
     value = message.get("state", message.get("eef_state"))
     if value is None:
         raise ValueError(
             "UnifoLM-VLA requires state/eef_state[23] "
-            "(left xyz+6D, right xyz+6D, waist/base[5]); joint angles alone are not sufficient"
+            "(left XYZ+6D [9], right XYZ+6D [9], waist/base[5]); "
+            "joint angles alone are not sufficient"
         )
     return _finite_vector(value, STATE_DIM, "state/eef_state")
 

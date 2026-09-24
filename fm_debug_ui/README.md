@@ -129,9 +129,11 @@ release their model weights without restarting the listener.
 
 The optional UnifoLM adapter is `scripts/unifolm_ws_server.py`. The published
 Unitree checkpoint expects a 23-D EEF/base state and returns a 23-D EEF action
-chunk; it does not treat 43 G1 joint angles as that state. The adapter accepts
-`state`/`eef_state[23]`, returns `action_space: "eef23"`, and refuses joint-only
-input rather than inventing an IK conversion. EEF output is displayed but
+chunk; the layout is left XYZ + 6-D rotation (9), right XYZ + 6-D rotation (9),
+then five waist/base values. It does not treat 43 G1 joint angles as that state.
+The adapter accepts `state`/`eef_state[23]`, returns `action_space: "eef23"`, and
+refuses joint-only input rather than inventing an IK conversion. EEF output is
+displayed but
 cannot enter the current joint-space `/g1/arm_cmd` preview. On Spark/CUDA 13
 the adapter defaults to SDPA because Unitree's hard-coded FlashAttention wheel
 is CUDA-12-linked.
