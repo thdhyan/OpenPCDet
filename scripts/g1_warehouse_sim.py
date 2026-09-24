@@ -153,6 +153,14 @@ parser.add_argument(
     help="Disable gravity on the G1 so it holds its spawn (standing) pose without a "
     "balance policy - use with --no-locomotion to test the sensors on an upright robot.",
 )
+parser.add_argument(
+    "--capture-dir",
+    type=str,
+    default=None,
+    help="Save third-person RGB views of the robot (CAPTURE_VIEWS) to this dir "
+    "once, at --capture-step, then keep running.",
+)
+parser.add_argument("--capture-step", type=int, default=600, help="Step at which --capture-dir views are taken.")
 args_cli = parser.parse_args()
 
 # --xr implies rendering into the VR headset (not headless)
@@ -380,6 +388,55 @@ def build_scene_fallback(stage) -> None:
         UsdPhysics.CollisionAPI.Apply(box.GetPrim())
 
 
+# name, eye (x,y,z), look-at (x,y,z), focal mm. G1 at origin facing +y, table at (0, 0.55).
+CAPTURE_VIEWS = [
+    ("front", (0.4, 2.8, 1.7), (0.0, 0.0, 0.85), 18.0),
+    ("side", (2.6, 0.3, 1.3), (0.0, 0.3, 0.8), 18.0),
+    ("overview", (2.4, -2.2, 2.6), (0.0, 0.3, 0.6), 14.0),
+    ("behind", (0.0, -1.5, 1.8), (0.0, 0.6, 0.7), 18.0),
+]
+
+
+def define_capture_cameras(stage) -> None:
+    """Author the CAPTURE_VIEWS cameras (before sim.reset(), with the rest of the stage)."""
+    for name, eye, tgt, focal in CAPTURE_VIEWS:
+        cam = UsdGeom.Camera.Define(stage, f"/World/Capture/{name}")
+        cam.CreateFocalLengthAttr(focal)
+        cam.CreateClippingRangeAttr(Gf.Vec2f(0.05, 300.0))
+        view = Gf.Matrix4d().SetLookAt(Gf.Vec3d(*eye), Gf.Vec3d(*tgt), Gf.Vec3d(0.0, 0.0, 1.0))
+        xf = UsdGeom.Xformable(cam.GetPrim())
+        xf.ClearXformOpOrder()
+        xf.AddTransformOp().Set(view.GetInverse())
+
+
+def capture_views(sim, g1, out_dir: Path, res=(1280, 720)) -> None:
+    """One render product retargeted to each CAPTURE_VIEWS camera; RGB PNG each.
+    g1.step() keeps running so the sensor streams stay in sync."""
+    import omni.replicator.core as rep
+    from PIL import Image
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rp = rep.create.render_product(f"/World/Capture/{CAPTURE_VIEWS[0][0]}", list(res))
+    ann = rep.AnnotatorRegistry.get_annotator("rgb")
+    ann.attach(rp)
+    for name, *_ in CAPTURE_VIEWS:
+        rp.hydra_texture.camera_path = f"/World/Capture/{name}"
+        # a few frames so RTX accumulation settles
+        for _ in range(20):
+            sim.step(render=True)
+            g1.step(sim.current_time)
+        img = np.asarray(ann.get_data())
+        if img.ndim != 3 or not img.size:
+            print(f"[WH] capture         : {name} returned no image")
+            continue
+        Image.fromarray(img[..., :3].astype(np.uint8)).save(out_dir / f"isaac_{name}.png")
+        print(f"[WH] capture         : saved {out_dir / f'isaac_{name}.png'}")
+    # Park instead of rp.destroy()/ann.detach(): Isaac's
+    # Articulation._on_prim_deletion drops its physics view on ANY prim
+    # deletion, which kills the WBC loop.
+    rp.hydra_texture.set_updates_enabled(False)
+
+
 def main() -> None:
     enable_extensions()
     # After enable_extensions(): Isaac Sim 6.1.0 moved isaacsim.core.api to
@@ -456,6 +513,9 @@ def main() -> None:
                 PhysxSchema.PhysxRigidBodyAPI.Apply(prim).CreateDisableGravityAttr(True)
                 frozen += 1
         print(f"[WH] freeze-robot    : gravity disabled on {frozen} bodies (upright, no policy)")
+
+    if args_cli.capture_dir:
+        define_capture_cameras(stage)
 
     sim = SimulationContext(
         stage_units_in_meters=1.0,
@@ -687,6 +747,8 @@ def main() -> None:
 
             if step % 100 == 0:
                 print(f"[WH] step {step:>6}  scans {scans}  points {last_points}")
+            if args_cli.capture_dir and step == args_cli.capture_step:
+                capture_views(sim, g1, REPO / args_cli.capture_dir)
             if args_cli.steps and step >= args_cli.steps:
                 break
     except KeyboardInterrupt:
