@@ -1,6 +1,6 @@
 # HANDOFF — G1 Foundation Model Testing + TF/Camera/Lidar Alignment
 
-**Status**: CHECKPOINT — Workstream A (sensors/TF/Dex3) DONE and verified in sim (`9a40ebb`); UI server and lazy GR00T N1.7 GPU service verified on Spark02; UnifoLM assets/dependencies ready but GPU load retry is blocked by another active workload; full Docker stack pending
+**Status**: CHECKPOINT — Workstream A (sensors/TF/Dex3) DONE and verified in sim (`9a40ebb`); UI and lazy GR00T/UnifoLM services verified on Spark02; UnifoLM GPU load + EEF23 inference + explicit unload verified; AgenticROS rosbridge/MCP images built on `dl`; Isaac ROS/CuVSLAM/NVBlox GPU runtime still pending a free GPU
 **Last Updated**: 2026-09-24
 **Repo**: `/home/thakk100/Projects/thesis/G1_sim`
 
@@ -44,20 +44,26 @@ The UI server proxies internally to model `:8765` and simulator bridge `:8766`.
 2. **UnifoLM-VLA is the secondary action model.**
    - The Unitree action checkpoint is present on Spark02 at
      `~/foundation_models/UnifoLM-VLA-Base` (about 19 GB).
-   - The required `UnifoLM-VLM-Base` download is in progress.
+   - The required `UnifoLM-VLM-Base` download is complete.
    - `scripts/unifolm_ws_server.py` is now a lazy EEF23 WebSocket adapter; it
      refuses joint-only input and never dispatches EEF actions as joints. It uses
   SDPA by default on Spark/CUDA 13 because Unitree's hard-coded FlashAttention
   wheel is CUDA-12-linked.
-   - Full dependency/model-load validation is still pending.
+   - Full dependency/model-load validation is complete: the service loaded on
+     Spark02, returned a 23-D `eef_action` preview for an explicit 23-D state,
+     and then returned `{"type":"status","loaded":false}` after explicit unload.
 
 3. **The old N1.5 locomanipulation checkout is historical fallback material only.**
    - Do not use it as the default or claim it is a drop-in N1.7 replacement.
 
 ### Docker services still to finish
 
-The repository contains the compose scaffold, but the complete Isaac Sim +
-GR00T/UnifoLM stack is **not yet running**. Keep the split deployment:
+The repository contains the compose scaffold. The CPU-only AgenticROS
+rosbridge is running on `dl` at `ws://127.0.0.1:9091`; its client-publish
+filter is read-only. The AgenticROS MCP image initializes and lists the
+read-only rosapi graph. The GPU Isaac Sim/CuVSLAM/NVBlox services are **not yet
+running** because all four `dl` GPUs are occupied; the pinned Isaac ROS 4.5
+image build is in progress. Keep the split deployment:
 
 ```text
 dl
@@ -117,7 +123,9 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
   `http://10.131.37.135:8080/?demo=1&view=3d-view`
 - The Spark02 UI process is running (PID/log in `~/fm-ui.pid` and
   `~/fm-debug-ui.log`) and the browser smoke test passed.
-- No Docker container has been started yet for the real Isaac Sim + model stack.
+- No GPU Isaac Sim/CuVSLAM/NVBlox container has been started yet; the CPU-only
+  `g1-agenticros-rosbridge` container is running. The AgenticROS MCP image is
+  built but remains an explicit stdio client, not an automatic dispatcher.
 
 ### New checkpoint — server, GPU venv, HF access, Dex3/TF work
 
@@ -129,18 +137,18 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 - The current local Hugging Face credential was forwarded to Spark02 through
   SSH stdin only; `hf auth whoami` returned `Thakk100`. The token is not stored
   in the repository, Docker files, or command arguments.
-- GR00T N1.7 is live on Spark02 at `:8765` (PID/log are in
-  `~/gr00t_ws_server.pid` and `~/gr00t_ws_server.log`). The service loaded in
-  ~12–15s, fell back to SDPA because the available aarch64 FlashAttention wheel
-  is CUDA-12-linked, and returned a verified 40-step synthetic inference preview.
+- GR00T N1.7 is available on Spark02 at `:8765` (PID/log are in
+  `~/gr00t_ws_server.pid` and `~/gr00t_ws_server.log`). It loaded in ~12–15s,
+  fell back to SDPA because the available aarch64 FlashAttention wheel is
+  CUDA-12-linked, and returned a verified 40-step synthetic inference preview;
+  it is currently unloaded.
 - The UnifoLM-VLA action checkpoint and 16+ GB `UnifoLM-VLM-Base` companion are
   downloaded on Spark02. The official dependencies and editable package are
   installed; `baseframework` and `qwen_vl_utils` import successfully.
-- The first UnifoLM GPU load was stopped after the VLM shards loaded because
-  Spark's GPU was occupied by another active Ollama `qwen3.6:27b` process. No
-  UnifoLM model error was observed; retry the load after that workload exits.
-- A fresh lazy UnifoLM listener is running at `:8767`
-  (`~/unifolm_ws_server.pid`); it has not loaded weights.
+- The UnifoLM GPU load and EEF23 smoke inference completed after the Ollama
+  workload released Spark's GPU; explicit unload returned `loaded:false`.
+- A lazy UnifoLM listener remains running at `:8767`
+  (`~/unifolm_ws_server.pid`) with weights unloaded.
 - `scripts/unifolm_ws_server.py` now provides a lazy, unloadable EEF23 adapter.
   It requires an explicit 23-D EEF/base state and intentionally does not guess
   EEF poses from joint angles.
@@ -186,13 +194,14 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 
 ### Resume order
 
-0. Let the active Spark GPU workload finish; do not launch a second UnifoLM
-   load while another process owns the GPU.
-1. Run one UnifoLM EEF23 adapter smoke request with an explicit 23-D state.
-2. Add a multi-process model manager with automatic idle eviction.
-3. Add `gr00t` and `unifolm` services to the Docker Compose stack.
-4. Start Isaac Sim + bridge + GR00T/UnifoLM + UI only after the GPU/container
-   environment is verified.
+0. Do not launch a second model load while another process owns a GPU.
+1. UnifoLM EEF23 smoke inference is complete; keep the service unloaded until
+   an explicit request arrives.
+2. Finish/validate the pinned Isaac ROS 4.5 image build on `dl`, then run static
+   package/library checks.
+3. Start Isaac Sim + CuVSLAM/NVBlox only after selecting a free GPU; verify RGB,
+   depth, 43 joints, `/tf`, and `/tf_static` together.
+4. Add a multi-process model manager with automatic idle eviction.
 5. Keep WBC on legs/waist and route only joint-space arm/hand trajectories after
    explicit preview approval. UnifoLM EEF output remains non-dispatching until
    a separately validated EEF-to-IK stage exists.
@@ -204,7 +213,7 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 | Workstream | Status | Priority |
 |------------|--------|----------|
 | **A. TF/Camera/Lidar + Dex3** | ✅ Verified live (verify_sensor_tf 11/11, check_sensor_suite PASS, test_dex3_contacts PASS); next = TacSL (`docs/TACSL_PLAN.md`) | MEDIUM |
-| **B. Foundation Model Testing (GR00T/UnifoLM/Cosmos)** | 🟡 GR00T live; UnifoLM assets/deps ready, GPU load retry blocked by active Ollama workload | **HIGH** |
+| **B. Foundation Model Testing (GR00T/UnifoLM/Cosmos)** | 🟡 GR00T and UnifoLM inference verified; both services unloaded; Isaac ROS GPU runtime pending | **HIGH** |
 
 ---
 
@@ -273,7 +282,7 @@ python scripts/test_dex3_contacts.py     # headless (no running sim): 6 fingerti
 | Model | Status | Location | Notes |
 |-------|--------|----------|-------|
 | **GR00T-N1.7-3B** | ✅ GPU load + synthetic inference | `~/foundation_models/GR00T-N1.7-3B` on spark02 | `REAL_G1`, lazy WebSocket `:8765` |
-| **UnifoLM-VLA-Base** | ✅ Action checkpoint; VLM companion downloading | `~/foundation_models/UnifoLM-VLA-Base` on spark02 | EEF23 preview; not yet live |
+| **UnifoLM-VLA-Base** | ✅ GPU load + EEF23 inference + explicit unload | `~/foundation_models/UnifoLM-VLA-Base` on spark02 | `REAL_G1`, lazy WebSocket `:8767`; preview-only |
 | **Cosmos3-Edge** | ✅ Downloaded (8.6 GB) | `~/foundation_models/Cosmos3-Edge` on spark02 | Video/world model |
 | **Cosmos-Reason2-2B** | 🟡 Access check in progress | Hugging Face cache on Spark02 | `HF_TOKEN` authenticated; do not assume model load until the test completes |
 | **Qwen3.8-Flash-Next** | 🟡 In progress | spark01, llama.cpp branch `qwen4exp` | Separate OpenAI-compatible server on :8001 |

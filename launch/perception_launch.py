@@ -21,7 +21,7 @@ NVBLOX output:
     /nvblox/costmap               nav_msgs/OccupancyGrid
 
 Run inside the container:
-    ros2 launch /workspace/thesis-sim/G1_sim/launch/perception_launch.py
+    ros2 launch /workspace/thesis-sim/launch/perception_launch.py
 """
 
 from launch import LaunchDescription
@@ -61,7 +61,7 @@ def generate_launch_description():
         # this when tracking.
         ExecuteProcess(
             cmd=["python3",
-                 "/workspace/thesis-sim/G1_sim/launch/tf_fallback.py",
+                 "/workspace/thesis-sim/launch/tf_fallback.py",
                  "--ros-args", "-p", "use_sim_time:=true"],
             output="screen",
         ),
@@ -102,7 +102,6 @@ def generate_launch_description():
                         "min_num_images": 1,
                         "rectified_images": False,
                         "enable_image_denoising": False,
-                        "enable_rectified_pose": False,
 
                         # Tracking: 0=multi-cam, 1=VIO, 2=RGBD
                         "tracking_mode": 2,
@@ -119,7 +118,6 @@ def generate_launch_description():
 
                         # Frames
                         "camera_optical_frames": ["d435_color_optical_frame"],
-                        "rig_frame": "pelvis",
                         "imu_frame": "imu_in_torso",
                         "base_frame": "pelvis",
 
