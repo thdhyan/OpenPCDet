@@ -1,304 +1,301 @@
-# HANDOFF — G1 Isaac Sim + ROS2 Zenoh Bridge Stack
-**Last updated:** 2026-08-31 (CUVSLAM + NVBLOX integration verified)
-**Branch:** `isaacsim6-rtx-emitter` (pushed to GitHub)
+# HANDOFF — G1 Foundation Model Testing + TF/Camera/Lidar Alignment
+
+**Status**: Foundation model setup READY TO RESUME; TF/Camera depth BROKEN
+**Last Updated**: 2026-09-24
+**Repo**: `/home/thakk100/Projects/thesis/G1_sim`
 
 ---
 
-## 🆕 CUVSLAM + NVBLOX Perception Stack — Verified 2026-08-31
+## 🎯 TWO PARALLEL WORKSTREAMS
 
-### What was done
-- Created `launch/perception_launch.py` — single launch file wiring CUVSLAM + NVBLOX to sim sensors
-- Created `launch/depth_converter.py` — converts 32FC1 depth (metres) → uint16 (mm) for CUVSLAM RGBD mode
-- Created `scripts/launch_perception.sh` — convenience script to launch from inside container
-- Fixed Dockerfile: installs real `libnpp-13-0` from NVIDIA CUDA repo (Isaac ROS NVBLOX needs CUDA 13 NPP)
-- Fixed entrypoint: sets `AMENT_PREFIX_PATH`, CUDA 13 library paths
-- Fixed CycloneDDS config: interface `lo` (not `loopback`), removed deprecated `MaxParticipants`/`Transport` elements
-
-### Architecture
-```
-Isaac Sim container (spark2)
-├── g1_warehouse_sim.py (WBC + sensors)
-├── depth_format_converter.py (32FC1 m → uint16 mm)
-├── perception_launch.py
-│   ├── static_transform_publisher (World → map)
-│   ├── visual_slam_node (CUVSLAM, RGBD mode, tracking_mode=2)
-│   └── nvblox_node (3D reconstruction, static TSDF)
-└── zenoh-bridge-ros2dds (sidecar, forwards all topics)
-
-Laptop
-├── zenoh-bridge-ros2dds (receives all topics)
-├── robot_state_publisher (URDF → TF)
-└── RViz2 (visualization)
-```
-
-### Sim sensor topics consumed
-| Topic | Type | Encoding | Notes |
-|-------|------|----------|-------|
-| `/g1/camera/rgb` | Image | rgb8 | 480×640, d435_color_optical_frame |
-| `/g1/camera/depth` | Image | 32FC1 | 480×640, metres, RELIABLE QoS |
-| `/g1/camera/camera_info` | CameraInfo | plumb_bob | fx=fy=460.55, cx=320, cy=240 |
-| `/g1/imu` | Imu | — | pelvis frame |
-| `/livox/mid360/points/a` | PointCloud2 | — | ~30k pts, RELIABLE QoS |
-| `/tf` | TFMessage | — | World → pelvis → robot chain |
-| `/g1/joint_states` | JointState | — | All joints |
-
-### CUVSLAM configuration (RGBD mode)
-- **tracking_mode**: 2 (RGBD) — uses `image_0` (RGB) + `depth_0` (uint16 mm)
-- **depth_scale_factor**: 1000.0 (divides uint16 mm by 1000 to get metres)
-- **base_frame**: pelvis
-- **map_frame**: map, **odom_frame**: odom
-- **camera_optical_frames**: `["d435_color_optical_frame"]`
-- **IMU**: disabled (D435 has no IMU; noise params are nominal)
-
-### NVBLOX configuration
-- **voxel_size**: 0.05 m
-- **mapping_type**: static_tsdf
-- **global_frame**: odom
-- **input_qos**: DEFAULT (works with Isaac Sim's RELIABLE publisher)
-- **map_clearing_frame_id**: pelvis
-- **workspace**: ±15 m, height -0.5 to 3.0 m
-
-### CUDA 13 compatibility (CRITICAL)
-Isaac Sim 4.5 ships CUDA 12.8, but Isaac ROS release-4.6 needs CUDA 13 libraries:
-- **libnppidei.so.13, libnppim.so.13, libnppitc.so.13, libnppc.so.13**: Installed via `libnpp-13-0` from NVIDIA CUDA apt repo
-- **libcudart.so.13**: Installed as dependency of `libnpp-13-0`
-- **libnvJitLink.so.13**: From Isaac Sim's cu13 Python package at `/isaac-sim/kit/python/lib/python3.12/site-packages/nvidia/cu13/lib/`
-- **ldconfig**: `/etc/ld.so.conf.d/cuda13-cu13.conf` points to cu13 Python package lib dir
-
-### Known issues
-1. **`ros2 topic echo` doesn't work**: Python type support mismatch between apt-installed ROS2 (Python 3.12) and Isaac Sim's bundled ROS2 (Python 3.11). C++ nodes work fine; CLI tools have import errors.
-2. **Frame rate warnings**: CUVSLAM expects 30 FPS but sim publishes ~20 FPS. Warnings are cosmetic.
-3. **NVBLOX initial TF lookup**: First map clearing fails because CUVSLAM hasn't published TF yet. Recovers after ~1 second.
-4. **Isaac Sim transient crash**: `bad_variant_access` in `omni.anim.behavior.core` — random, retry works.
-
-### To launch the perception stack
-```bash
-# Inside container (after sim is running):
-export PATH=/opt/ros/jazzy/bin:/usr/local/cuda-13.0/bin:$PATH
-export AMENT_PREFIX_PATH=/opt/ros/jazzy
-export CYCLONEDDS_URI=file:///root/.config/cyclonedds/cyclonedds.xml
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-export ROS_DOMAIN_ID=0
-export PYTHONPATH=/opt/ros/jazzy/lib/python3.12/site-packages:$PYTHONPATH
-export LD_LIBRARY_PATH=/opt/ros/jazzy/lib:/usr/local/cuda-13.0/lib64:/isaac-sim/kit/python/lib/python3.12/site-packages/nvidia/cu13/lib:$LD_LIBRARY_PATH
-ros2 launch /workspace/thesis-sim/G1_sim/launch/perception_launch.py
-```
-
-### Output topics (available via zenoh to laptop)
-| Topic | Type | Source |
-|-------|------|--------|
-| `/visual_slam/tracking/odometry` | Odometry | CUVSLAM |
-| `/visual_slam/tracking/slam_path` | Path | CUVSLAM |
-| `/tf` (map→odom→pelvis) | TFMessage | CUVSLAM |
-| `/nvblox_node/mesh` | MarkerArray | NVBLOX |
-| `/nvblox_node/static_map_slice` | OccupancyGrid | NVBLOX |
-| `/nvblox_node/esdf_slice_bounds` | MarkerArray | NVBLOX |
+| Workstream | Status | Priority |
+|------------|--------|----------|
+| **A. TF/Camera/Lidar Alignment** | ❌ Camera static TF missing; depth points below floor | **HIGH — fix first** |
+| **B. Foundation Model Testing (GR00T/Cosmos)** | ✅ Setup complete; WebSocket bridge working; paused | MEDIUM — resume after A |
 
 ---
 
-## 🆕 Isaac ROS (CUVSLAM + NVBLOX) — Installed 2026-08-31
+## 📋 WORKSTREAM A: TF/CAMERA/LIDAR (PRIORITY)
 
-### What was done
-- Created `docker/Dockerfile` extending `nvcr.io/nvidia/isaac-lab:3.0.0-beta2-post1`
-- Isaac ROS release-4.6 packages installed from NVIDIA apt repo (`noble-fastos` for DGX Spark ARM64)
-- CUVSLAM: `ros-jazzy-isaac-ros-visual-slam` — visual SLAM node
-- NVBLOX: `ros-jazzy-isaac-ros-nvblox` — 3D scene reconstruction + Nav2 costmap
-- Supporting packages: nav2, tf2, pcl, rviz2, robot-state-publisher
+### ✅ WORKING
 
-### Key technical decisions
-1. **Dummy CUDA metapackages**: Created empty `cuda-toolkit-13-0`, `tensorrt`, etc. packages via `equivs` to satisfy Isaac ROS apt dependencies without installing conflicting CUDA libraries from the NVIDIA CUDA repo
-2. **Do NOT install `ros-jazzy-ros-base`**: Installing it from apt causes a TSC crash on DGX Spark (ARM64). The base image already has Isaac Sim's bundled ROS 2 Jazzy
-3. **ROS 2 apt repo**: Added for PCL packages (`ros-jazzy-pcl-conversions`, `ros-jazzy-pcl-ros`)
-4. **Isaac Sim's bundled ROS**: Entrypoint uses `/isaac-sim/exts/isaacsim.ros2.core/jazzy/` not `/opt/ros/jazzy/`
+| Component | Status | Evidence |
+|-----------|--------|----------|
+| **Lidar** (`/livox/mid360/points/a`) | ✅ Fixed | World Z ∈ [-0.04, 3.67], mean 1.74 — floor at z=0 |
+| **Color Depth** (`/g1/camera/depth/color/points`) | ✅ Fixed | Optical frame → world Z ∈ [-0.39, 0.64], mean -0.13 |
+| **Static TF** `d435_link → d435_color_optical_frame` | ✅ Publishes | Quaternion (-0.5, 0.5, -0.5, 0.5) — REP-103 |
+| **Lidar spawn** | ✅ Identity | `spawn_mid360` default = identity (no double 180° roll) |
 
-### Isaac ROS packages available
-| Package | Purpose |
-|---------|---------|
-| `isaac_ros_visual_slam` | CUVSLAM visual SLAM node |
-| `isaac_ros_visual_slam_interfaces` | CUVSLAM message types |
-| `isaac_ros_nvblox` | NVBLOX 3D reconstruction |
-| `nvblox_ros`, `nvblox_msgs` | NVBLOX ROS integration |
-| `nvblox_nav2` | NVBLOX Nav2 costmap plugin |
-| `ros-jazzy-nav2-costmap-2d` | Nav2 costmap |
-| `ros-jazzy-robot-state-publisher` | URDF→TF publisher |
-| `ros-jazzy-tf2-ros` | TF2 transform library |
-| `ros-jazzy-pcl-conversions` | PCL↔ROS conversions |
+### ❌ BROKEN — IMMEDIATE FIX NEEDED
 
-### Usage
-```bash
-# Build the custom image
-cd /home/thakk100/Projects/thesis-sim
-docker compose build
+| Issue | Symptom | Root Cause |
+|-------|---------|------------|
+| **Camera static TF missing** | `d435_camera` frame NOT in `/tf` or `/tf_static` | `ROS2PublishRawTransformTree` (CameraTF) added to OmniGraph but not emitting |
+| **Depth points below floor** | `/g1/camera/depth/points` → world Z ∈ [-2.49, 4.84] | Frame_id = `d435_camera` but TF missing; USD camera local frame ≠ d435_link |
 
-# Run
-docker compose up -d
+### KEY FILES (TF/Camera)
 
-# Inside container, Isaac ROS packages are available:
-ros2 pkg list | grep isaac_ros
-```
+| File | Purpose |
+|------|---------|
+| `g1_sim/rtx_lidar.py` | `spawn_mid360` — identity default orientation |
+| `g1_sim/g1_robot.py` | Warehouse calls identity orientation |
+| `g1_sim/rtx_camera.py` | `attach_camera_publishers()` — OmniGraph with CameraTF |
+| `assets/g1_29dof_sensors.usd` | USD with baked transforms |
+| `rviz/g1_rtx.rviz` | RViz config (Fixed Frame = World) |
+
+### IMMEDIATE DEBUG TASKS (TF)
+
+1. **Check CameraTF node in OmniGraph**
+   - Graph: `/ActionGraph/CameraROS2`
+   - Node: `CameraTF` (ROS2PublishRawTransformTree)
+   - Must have exec from `OnTick.outputs:tick`
+
+2. **Verify camera prim name in USD**
+   ```python
+   from pxr import Usd
+   stage = Usd.Stage.Open('assets/g1_29dof_sensors.usd')
+   for p in stage.Traverse():
+       if 'camera' in p.GetName().lower():
+           print(p.GetPath())
+   ```
+
+3. **Check static TF emission**
+   ```bash
+   ros2 topic echo /tf_static --once | grep -A 10 "d435_camera"
+   ```
+
+4. **Verify depth_pcl frame_id**
+   ```bash
+   ros2 topic echo /g1/camera/depth/points --once | head -5
+   # Should show frame_id: d435_camera
+   ```
+
+### EXPECTED CORRECT STATE
+
+| Frame | World Z | Notes |
+|-------|---------|-------|
+| `mid360_link` | ~1.21 | 0.8 + 0.4188 |
+| `d435_link` | ~1.21 | 0.8 + 0.41987 |
+| `d435_camera` | ~1.21 | Same as d435_link (fixed offset) |
+| `d435_color_optical_frame` | ~1.21 | Same origin, rotated |
 
 ---
 
-## ⚠️ CRITICAL LESSON: Zenoh Bridge Must Be Restarted With Sim
+## 🤖 WORKSTREAM B: FOUNDATION MODEL TESTING (READY TO RESUME)
 
-**When the sim container restarts, the laptop zenoh bridge MUST also be restarted.**
-The sim-side zenoh bridge (in the container) gets a new participant ID on restart. The
-old laptop-side bridge holds stale connection state and loses routes. This was the root
-cause of "zero messages" on point cloud topics — NOT a QoS or CycloneDDS issue.
+### Models Available
+
+| Model | Status | Location | Notes |
+|-------|--------|----------|-------|
+| **GR00T-N1.7-3B** | ✅ Downloaded (6.5 GB) | `~/foundation_models/GR00T-N1.7-3B` on spark02 | `REAL_G1` pretrain tag |
+| **Cosmos3-Edge** | ✅ Downloaded (8.6 GB) | `~/foundation_models/Cosmos3-Edge` on spark02 | Video/world model |
+| **Cosmos-Reason2-2B** | ❌ Failed (gated) | — | Token lacks HF access |
+| **Qwen3.8-Flash-Next** | 🟡 In progress | spark01, llama.cpp branch `qwen4exp` | Separate OpenAI-compatible server on :8001 |
+
+### GR00T Modality Config (REAL_G1 pretrain)
+
+```yaml
+video: ego_view (T=2, Δ[-20,0])
+state (T=1):
+  left_wrist_eef_9d (9), right_wrist_eef_9d (9)
+  left_hand (7), right_hand (7)
+  left_arm (7), right_arm (7), waist (3)
+action (T=40): same 7 + base_height_command (1), navigate_command (3)
+  # RELATIVE for arms, ABSOLUTE for hands/waist
+language: annotation.human.task_description
+```
+
+### Architecture: WebSocket Bridge (Laptop ↔ Spark02)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  LAPTOP (Isaac Sim)                          SPARK02 (GPU)    │
+│  ┌──────────────────┐      WebSocket (ws://)      ┌──────────┐ │
+│  │ ws_sensor_bridge │◄────────────────────────────►│ gr00t_   │ │
+│  │  (client)        │   JSON frames, ~5 Hz        │ ws_server│ │
+│  └────────┬─────────┘                              └────┬─────┘ │
+│           │                                           │       │
+│  ┌────────▼─────────┐                        ┌────────▼────┐  │
+│  │ ROS2 (localhost) │                        │ GR00T Policy│  │
+│  │ /g1/camera/rgb   │                        │ (REAL_G1)   │  │
+│  │ /g1/joint_states │                        │ 40-step act │  │
+│  │ /g1/arm_cmd ◄────┼──── arm_cmd (14-D) ────┤             │  │
+│  └──────────────────┘                        └─────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Frame format** (JSON text frames):
+```json
+// Laptop → Spark (obs)
+{"type":"obs", "t":123.4, "rgb":"base64...", "joints":{"name":[...],"position":[...]}, "cmd":"pick up the steering wheel"}
+
+// Spark → Laptop (arm_cmd)
+{"type":"arm_cmd", "t":123.5, "name":[14 ARM_JOINTS], "position":[14 floats]}
+```
+
+### Files Created/Modified (Foundation Models)
+
+| File | Purpose |
+|------|---------|
+| `scripts/ws_sensor_bridge.py` | Laptop WS client: subscribes `/g1/camera/rgb`, `/g1/joint_states`; publishes `/g1/arm_cmd` |
+| `scripts/gr00t_ws_server.py` | Spark WS server: loads Gr00tPolicy, returns absolute arm targets |
+| `g1_sim/arm_override.py` | ArmTargetSubscriber: buffers `/g1/arm_cmd` for warehouse loop |
+| `scripts/g1_warehouse_sim.py` | Added `add_locomanip_props()` — packing table + steering wheel |
+
+### Spark02 Environment
 
 ```bash
-# On spark2:
-cd /home/thakk100/Projects/thesis-sim && docker compose down && docker compose up -d
-
-# On laptop (kill and restart):
-pkill -f zenoh-bridge-ros2dds
-~/bin/zenoh-bridge-ros2dds -e tcp/<SPARK_IP>:7447 -n /sim_bridge --rest-http-port 8001 &
+# GR00T venv
+~/venvs/gr00t/bin/python
+# Dependencies installed: tyro, cryptography, gitpython, jsonlines, onnx, onnxscript, tensorrt-cu13, websockets
+# Isaac-GR00T installed editable: ~/Isaac-GR00T -> /home/thakk100/foundation_models/Isaac-GR00T
 ```
 
----
+### Resume Commands (Foundation Models)
 
-## ✅ Verified Working (as of 2026-08-30)
-
-| Feature | Status | Details |
-|---------|--------|---------|
-| **LiDAR** | ✅ ~0.5 Hz | `/livox/mid360/points/a` (rclpy, RELIABLE QoS) |
-| **Depth + RGB** | ✅ ~0.5 Hz | `/g1/camera/depth/color/points` (XYZRGB, PCL convention) |
-| **Depth (XYZ)** | ✅ ~0.7 Hz | `/g1/camera/depth/points` (OmniGraph depth_pcl) |
-| **Joint states** | ✅ ~3 Hz | `/g1/joint_states` |
-| **TF** | ✅ ~5 Hz | `World` → `pelvis` → full robot chain |
-| **WBC** | ✅ | Internal mode, accepts `/g1/cmd_vel` Twist |
-| **Keyboard teleop** | ✅ | strafe + walking working |
-| **CycloneDDS** | ✅ | `MaxParticipants=128` on laptop |
-
----
-
-## Topic Names (confirmed)
-
-| Category | Topic |
-|----------|-------|
-| **LiDAR** | `/livox/mid360/points/a` |
-| **Camera RGB** | `/g1/camera/rgb` |
-| **Camera Depth** | `/g1/camera/depth` |
-| **Depth XYZ** | `/g1/camera/depth/points` |
-| **Depth XYZRGB** | `/g1/camera/depth/color/points` |
-| **Joint states** | `/g1/joint_states`, `/joint_states` |
-| **IMU** | `/g1/imu` |
-| **cmd_vel** | `/g1/cmd_vel` |
-| **TF** | `/tf`, `/tf_static` |
-| **Clock** | `/clock` |
-| **Robot description** | `/robot_description` |
-
----
-
-## TF Tree (verified)
-
-```
-World (dynamic, from sim OmniGraph)
-  └── pelvis (dynamic, from sim)
-      ├── torso_link
-      │   ├── head_link
-      │   ├── d435_link → d435_color_optical_frame
-      │   ├── left_shoulder_pitch_link → ... → left_rubber_hand
-      │   ├── right_shoulder_pitch_link → ... → right_rubber_hand
-      │   └── imu_in_torso
-      ├── left_hip_pitch_link → ... → left_ankle_roll_link
-      ├── right_hip_pitch_link → ... → right_ankle_roll_link
-      ├── pelvis_contour_link
-      ├── mid360_link
-      └── imu_in_pelvis
-```
-
-**Key:** No artificial `g1` frame. Sim publishes `World` → `pelvis` directly.
-RSP publishes `pelvis` → full chain. Fixed Frame in RViz = `World`.
-
----
-
-## Docker Setup
-
-### Files
-- `docker-compose.yml` → copied to spark2 at `/home/thakk100/Projects/thesis-sim/docker-compose.yml`
-- `docker/entrypoint.sh` → at `G1_sim/docker/entrypoint.sh` on spark2
-- `docker/cyclonedds.xml` → reference only; NOT used via CYCLONEDDS_URI (causes rclpy crash)
-
-### Portability
-Works on DL, Spark, any NVIDIA GPU server. Just:
-1. Clone the repo
-2. `cd G1_sim/docker && docker compose up -d`
-3. Start laptop zenoh bridge
-
-### Entry point
-The entrypoint installs `onnxruntime-gpu` and launches the sim. Isaac ROS (CUVSLAM/NVBLOX)
-is NOT installed in the container — needs separate setup (see CUVSLAM section below).
-
----
-
-## CUVSLAM + NVBLOX Status
-
-**NOT yet installed.** Attempted install in container entrypoint failed:
-- No `sudo` in the container (ubuntu user)
-- Isaac ROS Debian packages not available for Jazzy/Noble (release-2.1 was Humble only)
-- Building from source requires `colcon` and ROS2 build tools not in the container
-
-**Options:**
-1. Build a custom Docker image with Isaac ROS pre-installed
-2. Use release-4.6 packages when available for Jazzy
-3. Run CUVSLAM/NVBLOX as separate containers
-
----
-
-## Startup Procedure
-
-### 1. On spark2 (sim + zenoh bridge)
 ```bash
+# On spark02: start GR00T WebSocket server
 ssh aim_spark02
-cd /home/thakk100/Projects/thesis-sim
-docker compose down 2>/dev/null
-docker compose up -d
-# Wait ~7-10 min for sim to load
-docker logs -f isaac-sim-ros | grep '\[WH\]'
+pkill -9 -f gr00t_ws_server  # clean up any old
+nohup ~/venvs/gr00t/bin/python ~/gr00t_ws_server.py \
+  --model ~/foundation_models/GR00T-N1.7-3B --port 8765 \
+  > ~/gr00t_ws_server.log 2>&1 &
+
+# On laptop: start warehouse sim (with table + steering wheel)
+cd /home/thakk100/Projects/thesis/G1_sim
+source .envrc
+python scripts/g1_warehouse_sim.py --wbc-mode internal --no-ira --config-dir assets/lidar_configs_rotary
+
+# On laptop (separate terminal): start WebSocket sensor bridge
+cd /home/thakk100/Projects/thesis/G1_sim
+source .envrc
+python scripts/ws_sensor_bridge.py \
+  --host 10.131.37.135 --port 8765 \
+  --text-cmd "pick up the steering wheel" --rate 5
 ```
 
-### 2. On laptop (zenoh bridge + robot_state_publisher + teleop)
-```bash
-# Zenoh bridge
-~/bin/zenoh-bridge-ros2dds -e tcp/10.131.171.77:7447 -n /sim_bridge --rest-http-port 8001 &
+### Current Bridge Status
 
-# Robot state publisher
-source /opt/ros/jazzy/setup.bash
-ros2 launch /tmp/rsp_launch.py &
+- ✅ WebSocket connection establishes (spark02:8765 reachable at 10.131.37.135)
+- ✅ GR00T policy loads (3B params on CPU, ~12s load time)
+- ⚠️ **Known issue**: RGB frame size exceeds websocket max_size (1MB default)
+  - Fix applied: `max_size=10*1024*1024` in `gr00t_ws_server.py`
+- ⚠️ **Known issue**: `server` variable captured in closure for handler
+  - Fix applied: pass `server` explicitly in `handler_wrapper`
 
-# Keyboard teleop (interactive terminal!)
-source /opt/ros/jazzy/setup.bash
-source ~/Projects/thesis/g1_perception_ws/install/setup.bash
-ros2 run g1_nav keyboard_teleop
+### Arm Override Architecture (Decoupled from WBC)
+
 ```
-
-### 3. RViz (optional)
-```bash
-source /opt/ros/jazzy/setup.bash
-rviz2 -d /tmp/sim_view.rviz
-# Fixed Frame: World
-# Add: LiDAR (PointCloud2), Depth RGB (PointCloud2), RobotModel, TF
+Warehouse Loop (60 Hz):
+  ├─ WBC @50Hz → LEG_WAIST_JOINTS (15 DOF) — Balance/Walk policy
+  └─ ArmTargetSubscriber → ARM_JOINTS (14 DOF) — GR00T/Cosmos via /g1/arm_cmd
+       └─ Hold-last semantics: arms freeze at last target on dropout
 ```
 
 ---
 
-## Code Changes Made This Session
+## 🏭 WAREHOUSE SIM — CURRENT STATE
 
-| File | Change | Line |
-|------|--------|------|
-| `g1_sim/rtx_publisher.py` | QoS: BEST_EFFORT → RELIABLE | 106 |
-| `g1_sim/rgbd_publisher.py` | QoS: BEST_EFFORT → RELIABLE | 79 |
-| `/tmp/rsp_launch.py` | Removed artificial `g1→pelvis` joint | all |
-| `docker/entrypoint.sh` | Simplified: onnxruntime + sim only | all |
-| `docker/docker-compose.yml` | Portable, thesis-sim volume mount | all |
-| `docker/cyclonedds.xml` | Reference: MaxParticipants=128 | new |
+### Running Processes
+
+```bash
+# Check tmux sessions
+tmux ls
+# g1sim    - warehouse sim (running, WBC balanced, step ~8000+)
+# g1rviz   - RViz with all pointcloud displays
+# g1teleop - keyboard WBC control
+```
+
+### Assets Added (Isaac Lab Locomanip Pick-Place)
+
+```python
+# Packing Table (kinematic)
+prim_path="/World/Props/PackingTable"
+usd_path="{ISAAC_NUCLEUS_DIR}/Props/PackingTable/packing_table.usd"
+pos=[0.0, 0.55, -0.3]  # y=0.55 forward, z=-0.3 (table top ~0.7m)
+
+# Steering Wheel (dynamic, graspable)
+prim_path="/World/Props/SteeringWheel"
+usd_path="{ISAACLAB_NUCLEUS_DIR}/Mimic/pick_place_task/pick_place_assets/steering_wheel.usd"
+pos=[-0.35, 0.45, 0.6996]  # on table surface
+scale=(0.75, 0.75, 0.75)
+mass=0.5
+```
+
+### Sim Logs
+
+| Log | Path |
+|-----|------|
+| Sim (main) | `/tmp/opencode/warehouse_gui13.log` |
+| Sim (alt) | `~/warehouse_sim.log` |
+| WS Bridge | `~/ws_bridge_test.log` |
+| GR00T Server | `~/gr00t_ws_server.log` (on spark02) |
 
 ---
 
-## Known Issues
-- **LiDAR rate is ~0.5 Hz** (not the ~14 Hz from earlier session). The sim LiDAR
-  publisher runs at sim frame rate but zenoh bridge forwarding adds latency.
-- **Isaac ROS CUVSLAM/NVBLOX** not installed — blocked by container permissions
-- **No CYCLONEDDS_URI** in container — setting it via env var causes rclpy Node crash
-- **Carters_0 agent** fails to load nova_carter.yaml (harmless warning)
+## 🔧 QUICK FIXES APPLIED (NOT YET COMMITTED)
+
+```bash
+# Files modified since last commit:
+M  g1_sim/arm_override.py         # spin_once fix (rclpy.spin_once)
+M  g1_sim/rtx_publisher.py        # invert_z param + Z flip
+M  g1_sim/g1_robot.py             # pass invert_z=True to lidar
+M  scripts/g1_warehouse_sim.py    # add_locomanip_props (table + wheel)
+M  scripts/ws_sensor_bridge.py    # import fixes (Node, ARM_CMD_TOPIC)
+M  scripts/gr00t_ws_server.py     # websockets 17.x compat, max_size, server closure
+?? scripts/ws_sensor_bridge.py
+?? scripts/gr00t_ws_server.py
+```
+
+---
+
+## 📋 NEXT STEPS (IN ORDER)
+
+### 1. Fix Camera TF (Workstream A — DO THIS FIRST)
+```bash
+cd /home/thakk100/Projects/thesis/G1_sim
+source .envrc
+# Debug OmniGraph CameraTF node emission
+# Fix rtx_camera.py attach_camera_publishers() to emit static TF
+```
+
+### 2. Commit Foundation Model Setup (Workstream B)
+```bash
+git add g1_sim/arm_override.py g1_sim/rtx_publisher.py g1_sim/g1_robot.py \
+        scripts/g1_warehouse_sim.py scripts/ws_sensor_bridge.py scripts/gr00t_ws_server.py
+git commit -m "feat: GR00T WebSocket bridge + arm override + locomanip props"
+```
+
+### 3. Resume Foundation Model Testing
+- Verify Camera TF fixed → depth points align with lidar
+- Run GR00T bridge with proper RGB (currently frame too large)
+- Test Cosmos3-Edge for video prediction / planning
+- Integrate steering wheel grasp task
+
+---
+
+## 🧭 MENTAL MODEL: HOW TO THINK ABOUT THIS
+
+| Layer | Responsibility | Owner |
+|-------|----------------|-------|
+| **WBC (legs/waist)** | Balance, walk, stand | `WbcBridge` (ONNX) — never touches arms |
+| **Arm Override** | Hold, reach, grasp | `ArmTargetSubscriber` → `/g1/arm_cmd` |
+| **Foundation Model** | Predict arm targets | GR00T/Cosmos on spark → WebSocket → `/g1/arm_cmd` |
+| **Sensors** | RGB, depth, lidar, joint_states | Isaac Sim RTX + ROS2 bridge |
+| **Props** | Table, steering wheel | USD references in `add_locomanip_props()` |
+
+**Key invariant**: WBC and Foundation Model **never share joints**. WBC owns 15 leg/waist joints; Foundation Model owns 14 arm joints. This decoupling is intentional and working.
+
+---
+
+## 📝 NOTES FOR RESUMPTION
+
+1. **Spark02 IP**: Use `10.131.37.135` (not 10.131.140.170) — check `hostname -I` on spark02
+2. **GR00T load time**: ~12s on CPU — wait for `[WS] GR00T arm server on ws://0.0.0.0:8765`
+3. **RGB frame size**: 640×480 RGB = ~900KB base64 → need `max_size=10MB` on server
+4. **Camera TF fix**: Once fixed, depth pointcloud will align with lidar in RViz
+5. **Steering wheel**: Dynamic rigid body on kinematic table — ready for GR00T grasp test
+
+---
+
+**Next agent**: Fix `CameraTF` static TF emission in `g1_sim/rtx_camera.py`. The OmniGraph node exists but doesn't publish to `/tf_static`. Once fixed, resume foundation model testing with aligned sensors.

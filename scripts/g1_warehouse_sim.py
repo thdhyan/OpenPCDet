@@ -316,6 +316,48 @@ def build_scene_ira() -> bool:
     )
 
 
+def add_locomanip_props(stage) -> None:
+    """Add Isaac Lab locomanip pick-place props: packing table + steering wheel.
+    Mirrors IsaacContrib-PickPlace-Locomanipulation-G1-Abs env config.
+    """
+    from isaacsim.storage.native import get_assets_root_path
+
+    root = get_assets_root_path()
+    if not root:
+        print("[WH] locomanip props: SKIP - no asset root")
+        return
+
+    # Packing table (kinematic, from Isaac Nucleus)
+    table_usd = f"{root}/Isaac/Props/PackingTable/packing_table.usd"
+    table_prim = stage.DefinePrim("/World/Props/PackingTable", "Xform")
+    table_prim.GetReferences().AddReference(table_usd)
+    table_xform = UsdGeom.Xformable(table_prim)
+    table_xform.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.55, -0.3))
+    table_xform.AddRotateXYZOp().Set(Gf.Vec3d(0.0, 0.0, 0.0))
+    # Make kinematic so it doesn't fall
+    rb_api = UsdPhysics.RigidBodyAPI.Apply(table_prim)
+    UsdPhysics.CollisionAPI.Apply(table_prim)
+    kinematic_attr = rb_api.GetKinematicEnabledAttr()
+    if kinematic_attr:
+        kinematic_attr.Set(True)
+    print(f"[WH] packing table   : added at /World/Props/PackingTable")
+
+    # Steering wheel (dynamic, from Isaac Lab Mimic assets)
+    wheel_usd = f"{root}/IsaacLab/Mimic/pick_place_task/pick_place_assets/steering_wheel.usd"
+    wheel_prim = stage.DefinePrim("/World/Props/SteeringWheel", "Xform")
+    wheel_prim.GetReferences().AddReference(wheel_usd)
+    wheel_xform = UsdGeom.Xformable(wheel_prim)
+    wheel_xform.AddTranslateOp().Set(Gf.Vec3d(-0.35, 0.45, 0.6996))
+    wheel_xform.AddScaleOp().Set(Gf.Vec3f(0.75, 0.75, 0.75))
+    wheel_xform.AddRotateXYZOp().Set(Gf.Vec3d(0.0, 0.0, 0.0))
+    UsdPhysics.RigidBodyAPI.Apply(wheel_prim)
+    UsdPhysics.CollisionAPI.Apply(wheel_prim)
+    # Mass API for realistic grasp
+    mass_api = UsdPhysics.MassAPI.Apply(wheel_prim)
+    mass_api.CreateMassAttr(0.5)
+    print(f"[WH] steering wheel  : added at /World/Props/SteeringWheel")
+
+
 def build_scene_fallback(stage) -> None:
     """Warehouse with no dynamic actors - used when --no-ira is passed or
     IRA's setup failed."""
@@ -326,6 +368,9 @@ def build_scene_fallback(stage) -> None:
     except Exception as e:
         print(f"[WH] warehouse load failed ({e}), using flat ground")
         build_flat_ground(stage)
+
+    # Add locomanip props (table + steering wheel)
+    add_locomanip_props(stage)
 
     for i, (x, y) in enumerate(PEDESTRIANS):
         box = UsdGeom.Cube.Define(stage, f"/World/targets/pedestrian_{i}")
@@ -366,11 +411,14 @@ def main() -> None:
 
     if not ira_ok:
         build_scene_fallback(stage)
-    elif not args_cli.keep_carter_cameras:
-        import g1_sim.ira_actors as ira_actors
+    else:
+        # Add locomanip props to IRA scene too
+        add_locomanip_props(stage)
+        if not args_cli.keep_carter_cameras:
+            import g1_sim.ira_actors as ira_actors
 
-        stripped = ira_actors.strip_carter_cameras(stage)
-        print(f"[WH] carter cameras  : {stripped} deactivated (keep with --keep-carter-cameras)")
+            stripped = ira_actors.strip_carter_cameras(stage)
+            print(f"[WH] carter cameras  : {stripped} deactivated (keep with --keep-carter-cameras)")
 
     # G1 always goes on top, regardless of which path built the environment.
     # load_g1 owns the reference + session-layer edit-target dance (rationale
