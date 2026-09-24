@@ -3,7 +3,7 @@
 # provides AgenticROS' stdio MCP server for Codex/Claude/Hermes clients.
 FROM node:20-bookworm-slim
 
-ARG AGENTICROS_REF=main
+ARG AGENTICROS_REF=e44910f6a71968d3214ca8b1107b20b8dba21f42
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -12,8 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && corepack enable \
     && corepack prepare pnpm@9.15.4 --activate
 
-RUN git clone --depth 1 --branch "${AGENTICROS_REF}" \
-    https://github.com/agenticros/agenticros.git /src
+RUN mkdir -p /src && cd /src && \
+    git init -q && \
+    git remote add origin https://github.com/agenticros/agenticros.git && \
+    git fetch --depth 1 origin "${AGENTICROS_REF}" && \
+    git checkout -q --detach FETCH_HEAD
 WORKDIR /src
 RUN pnpm install --frozen-lockfile \
     && pnpm build \
