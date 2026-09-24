@@ -1,0 +1,4 @@
+# NVIDIA Isaac ROS 4.5 OpenCV pin.
+Package: libopencv*
+Pin: version 4.6.0*
+Pin-Priority: 1001

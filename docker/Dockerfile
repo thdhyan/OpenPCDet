@@ -33,6 +33,8 @@ RUN apt-get update && apt-get install -y curl gnupg && \
 # Isaac ROS 4.5 targets CUDA 13.0. Pin the apt solver so a fresh CUDA repo
 # cannot silently pull 13.1+ packages that require a newer host driver.
 COPY docker/isaac_ros_cuda_13_0.pref /etc/apt/preferences.d/g1-isaac-ros-cuda-13-0.pref
+COPY docker/isaac_ros_tensorrt_13_0.pref /etc/apt/preferences.d/g1-isaac-ros-tensorrt-13-0.pref
+COPY docker/isaac_ros_opencv_4_6.pref /etc/apt/preferences.d/g1-isaac-ros-opencv-4-6.pref
 # Isaac ROS NVBLOX needs the real CUDA 13 NPP libraries.
 # Repo path is arch-specific: sbsa = ARM64 (Sparks), x86_64 = amd64.
 RUN ARCH=$(dpkg --print-architecture) && \
