@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
 
 source /opt/ros/jazzy/setup.bash
+set -u
 
 readonly PARAMS=/etc/rosbridge/read_only_params.yaml
 ros2 run rosapi rosapi_node --ros-args --params-file "$PARAMS" &
