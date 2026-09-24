@@ -228,7 +228,7 @@ G1_sim/
 
 | Topic | Type | Source |
 |---|---|---|
-| `/livox/mid360/points/a` | `PointCloud2` | RTX LiDAR (in-sim rclpy; per-prim suffix `a,b,c,…` — default rotary profile spawns 1 prim) |
+| `/livox/mid360/points/a` | `PointCloud2` | RTX LiDAR, real non-repetitive Mid-360 pattern (in-sim rclpy, frame `mid360_link`) |
 | `/g1/camera/rgb` | `Image` | D435 RGB |
 | `/g1/camera/depth` | `Image` | D435 depth |
 | `/g1/camera/semantic` | `Image` | D435 semantic |
@@ -244,6 +244,51 @@ G1_sim/
 | `/clock` | `Clock` | OmniGraph |
 
 Subscribed: `/g1/cmd_vel` (`Twist`) → WBC velocity command at 50 Hz.
+
+---
+
+## Sensor TF verification (2026-09-23)
+
+Lidar and D435 clouds land where they should in the `World` frame: floor at
+z = 0, walls vertical, no points above the Mid-360's upper FOV edge (it is
+mounted inverted, like the real G1). Verified TF values are recorded in
+[`docs/tf_snapshot_20260923.yaml`](docs/tf_snapshot_20260923.yaml).
+**Do not change the sensor mounts in `g1_sim/g1_robot.py` / `g1_sim/rtx_camera.py`
+without re-running the checks below.**
+
+| RViz (Fixed Frame `World`) | |
+|---|---|
+| ![overview](screenshots/tf_fix/rviz_overview.png) | ![side](screenshots/tf_fix/rviz_side.png) |
+| ![top](screenshots/tf_fix/rviz_top.png) | Top view: non-repetitive Mid-360 ground coverage, head/faceplate shadow wedges, D435 depth in the forward gap. Side view: flat floor, vertical walls, nothing on the ceiling. |
+
+| Check (`scripts/verify_sensor_tf.py`) | Result |
+|---|---|
+| Mid-360 floor z (world) | −0.003 ± 0.010 m |
+| Mid-360 elevation (sensor frame, p1/p99) | −6.3° … 49.3° (datasheet −7° … 52°) |
+| Mid-360 azimuth coverage | 36/36 bins of 10° |
+| Mid-360 non-repetition | 93 % unique directions over 2 s |
+| D435 `depth/points` / `depth/color/points` floor z | +0.003 ± 0.008 m / +0.003 ± 0.008 m |
+| `depth/points` vs `depth/color/points` | 0.9 cm median nearest neighbour |
+
+`scripts/check_sensor_suite.py` (with `--wbc-mode internal`): all topics at
+their design rate in sim time (lidar 10 Hz, IMUs/TF/joints 60 Hz), the four
+IMUs read gravity with unit quaternions, 29 joints, and a 0.4 m/s
+`/g1/cmd_vel` command walks the robot 1.44 m in 4 s while it stays upright.
+
+```bash
+# sim running (headless is fine), ROS 2 Jazzy sourced
+python3 scripts/verify_sensor_tf.py        # clouds vs TF: 11 checks
+python3 scripts/check_sensor_suite.py      # rates, IMUs, WBC walk
+```
+
+**How the Mid-360 works here.** The RTX solid-state engine only reproduces
+authored ray directions with a *single* emitter state (10 states squeezed
+−7…52° into −20…10°). `assets/lidar_configs_solid` therefore holds one real
+20k-ray frame, and `g1_sim.rtx_lidar.ScanPatternCycler` rewrites it with the
+next recorded frame (`assets/scan_patterns/mid360.npy`, 40 frames) every
+scan. Regenerate with `python scripts/gen_mid360_solid_config.py`. The sensor
+prim sits 15 cm above `mid360_link` (world-up): closer to the head, the head
+mesh swallows most downward rays.
 
 ---
 
@@ -352,6 +397,8 @@ attribute list.
 
 | Date | Bug | Fix |
 |---|---|---|
+| 2026-09-23 | D435 depth clouds ~14 cm off (floor at z = −0.07), colorized cloud 7.8 cm off the raw one | Optical static TF carries the camera prim's clearance offset; vertical aperture matches the 640x480 render, RGBD publisher uses fy = fx |
+| 2026-09-23 | Mid-360 looked at the ceiling (double 180° roll), then a flat −20…10° band on the solid-state path | Identity sensor orientation under `mid360_link`; single-state solid profile cycled per scan; mount +15 cm; `minReflectance` 0.02 |
 | 2026-09-22 | Sporadic GMO `Invalid magic number` in live runs (run7/run8) | Origin inside a mesh, not (only) the #685 race: MID360 mount dropped 2 cm (local z `-0.05`→`-0.03`; flipped frame = world +5→+3 cm) in warehouse/capture/bake |
 | 2026-08-13 | LiDAR partial band (+11°…+88° only, no ground returns) | `GMO elementsCoordsType=SPHERICAL` → x/y/z are az/el/range degrees, not Cartesian. Set `omni:sensor:Core:elementsCoordsType="CARTESIAN"` in `spawn_mid360`; added spherical→Cartesian fallback in publisher |
 | 2026-08-13 | Intensity always constant 100 | `gmo.scalar` is real normalised intensity (GMO RST docs); publisher now uses it |
