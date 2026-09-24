@@ -168,6 +168,7 @@ def load_g1(
     prim_path: str = "/World/G1",
     usd_path: str | Path | None = None,
     translation: tuple[float, float, float] = (0.0, 0.0, 0.8),
+    yaw_deg: float = 0.0,
     *,
     # --- sensors: every one defaults ON ---
     camera: bool = True,
@@ -206,7 +207,8 @@ def load_g1(
     Args:
         prim_path: where to instance the robot.
         usd_path: robot USD; defaults to the package's baked sensors asset.
-        translation: world spawn pose of the robot root.
+        translation: world spawn position of the robot root.
+        yaw_deg: spawn heading about world Z (counter-clockwise, degrees).
         camera, lidar, imu_pelvis, imu_torso, imu_lidar, imu_camera:
             per-sensor switches, all True.
         ros2: master switch - False skips every ROS2 graph/publisher (and any
@@ -215,7 +217,7 @@ def load_g1(
         depth_colorized: publish the RGB-fused XYZRGB cloud (needs camera+ros2).
         semantics: optional ``{prim_path: class}`` labels for segmentation.
         lidar_*: Mid-360 spawn tuning; defaults reproduce the validated
-            warehouse mount (+3 cm world-up clearance to clear the head mesh).
+            warehouse mount (+15 cm world-up clearance above mid360_link).
         create_articulation: wrap pelvis in isaacsim's Articulation.
 
     Returns:
@@ -255,6 +257,9 @@ def load_g1(
     if translate is None:
         translate = xform.AddTranslateOp()
     translate.Set(Gf.Vec3d(*translation))
+    if yaw_deg:
+        yaw = next((op for op in xform.GetOrderedXformOps() if op.GetOpName() == "xformOp:rotateZ"), None)
+        (yaw or xform.AddRotateZOp()).Set(float(yaw_deg))
     # Let the reference compose before anyone queries child prims.
     import omni.kit.app
 

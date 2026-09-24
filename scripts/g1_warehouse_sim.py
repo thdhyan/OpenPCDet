@@ -431,6 +431,9 @@ def main() -> None:
     g1 = load_g1(
         prim_path=ROBOT_PRIM,
         usd_path=G1_USD,
+        # Face the packing table at (0, 0.55): IsaacLab locomanip G1 spawns at
+        # the origin with rot (0, 0, 0.7071, 0.7071) xyzw = +90 deg yaw.
+        yaw_deg=90.0,
         camera=not args_cli.no_camera,
         ros2=ENABLE_ROS2,
         lidar_config_dir=REPO / args_cli.config_dir,
