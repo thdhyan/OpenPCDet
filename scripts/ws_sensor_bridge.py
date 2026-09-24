@@ -18,7 +18,7 @@ A single WebSocket connection is used bidirectionally. Laptop = client
 plain ws:// server on a known port).
 
 Frame format (JSON text frames):
-    {"type":"obs", "t":123.4, "rgb":[...8bit...], "joints":{"n":[...],"p":[...]}, "cmd":"hold a box"}
+    {"type":"obs", "t":123.4, "rgb":"base64-jpeg", "joints":{"n":[...],"p":[...]}, "cmd":"hold a box"}
     {"type":"arm_cmd", "t":123.5, "name":[...], "position":[...]}
     {"type":"ping", "t":123.6}
     {"type":"cmd", "text":"pick up the box"}   # spark -> laptop: text trigger
@@ -40,7 +40,6 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from sensor_msgs.msg import JointState, Image
-import numpy as np
 
 # Re-use the arm-override message contract.
 from g1_sim.wbc_bridge import ARM_JOINTS
@@ -111,7 +110,8 @@ class WsBridgeNode(Node):
 
 
 async def ws_client(bridge: WsBridgeNode, host: str, port: int,
-                     text_cmd: str | None, publish_hz: float) -> None:
+                     text_cmd: str | None, publish_hz: float,
+                     send_to_sim: bool = False) -> None:
     import websockets
     from websockets.exceptions import ConnectionClosed
 
@@ -122,6 +122,10 @@ async def ws_client(bridge: WsBridgeNode, host: str, port: int,
         try:
             async with websockets.connect(uri, ping_interval=5, ping_timeout=10) as ws:
                 bridge.get_logger().info(f"ws_bridge: connected to {uri}")
+                if not send_to_sim:
+                    bridge.get_logger().warning(
+                        "arm dispatch disabled; received actions are preview-only (use --send-to-sim to opt in)"
+                    )
                 loop = asyncio.get_event_loop()
                 while True:
                     # spin ROS2 + collect obs without blocking the loop
@@ -150,8 +154,7 @@ async def ws_client(bridge: WsBridgeNode, host: str, port: int,
                     if msg.get("type") == "arm_cmd":
                         names = msg.get("name", [])
                         pos = msg.get("position", [])
-                        if names and pos:
-                            # publish arm targets back into the local DDS graph
+                        if send_to_sim and names and pos:
                             loop.call_soon_threadsafe(
                                 lambda n=names, p=pos, st=t: bridge.publish_arm(n, p, st)
                             )
@@ -173,13 +176,15 @@ def main():
                     help="static text instruction forwarded every frame")
     ap.add_argument("--rate", type=float, default=5.0,
                     help="publish observations Hz")
+    ap.add_argument("--send-to-sim", action="store_true",
+                    help="publish model arm targets to /g1/arm_cmd; default is preview-only")
     args = ap.parse_args()
 
     rclpy.init()
     bridge = WsBridgeNode()
     try:
         asyncio.run(ws_client(bridge, args.host, args.port,
-                              args.text_cmd, args.rate))
+                              args.text_cmd, args.rate, args.send_to_sim))
     except KeyboardInterrupt:
         pass
     finally:

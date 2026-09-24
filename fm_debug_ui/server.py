@@ -33,6 +33,7 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("fm-ui")
 
 REPO = Path(__file__).resolve().parent.parent
+ASSET_DIR = Path(__file__).resolve().parent / "assets"
 
 # ============================================================
 # MODEL REGISTRY
@@ -86,7 +87,8 @@ ROBOTS = {
         "total_dof": 29,
         "arm_joints": ARM_JOINTS,
         "leg_waist_joints": LEG_WAIST_JOINTS,
-        "urdf_path": str(REPO / "assets" / "robot" / "g1_29dof.urdf"),
+        "urdf_url": "/assets/g1_29dof.urdf",
+        "urdf_path": str(ASSET_DIR / "g1_29dof.urdf"),
     },
 }
 
@@ -351,6 +353,7 @@ def main():
     args = parser.parse_args()
 
     app = web.Application()
+    app.router.add_static("/assets", ASSET_DIR, show_index=False)
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/models", handle_models)
     app.router.add_get("/api/schema", handle_schema)

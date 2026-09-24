@@ -4,18 +4,17 @@
 This runs ON the spark (not dl). It accepts a single bidirectional WebSocket
 connection from the laptop's ``ws_sensor_bridge.py`` and, on each incoming
 observation frame, runs the GR00T N1.7-3B ``REAL_G1`` pretrain policy to
-predict a 40-step arm action chunk and returns the FIRST step's joint targets
-back over the SAME socket as an ``arm_cmd`` message → which the laptop bridge
-republishes on /g1/arm_cmd (local DDS only, no cross-machine DDS).
+predict a 40-step arm action chunk. It returns the full preview trajectory
+plus its first absolute pose; dispatch is never automatic.
 
 Design choices (user constraints):
 - Transport: WebSocket (not ZMQ, not cross-machine DDS).
 - Single connection, laptop-initiated (client) - NAT/firewall friendly.
 - Arms are decoupled from WBC: only ARM_JOINTS are returned; legs/waist stay
   the Balance policy's job.
-- The policy predicts RELATIVE actions; we integrate the first step into an
-  ABSOLUTE target using the current arm joints (also carried over the socket)
-  so the command is a real hold/pose, not a delta.
+- The policy predicts RELATIVE actions; the server integrates the full chunk
+  from the observed arm pose for preview. The UI must explicitly approve a
+  selected pose before any dispatch path publishes it.
 - Hold-last semantics: if an observation frame arrives late/empty, the last
   computed arm pose is resent so the arms don't collapse.
 
@@ -134,24 +133,28 @@ def _build_observation(mc, rgb_np: np.ndarray | None, joint_names: list[str],
     return obs
 
 
-def _action_to_arm_targets(action: dict) -> np.ndarray:
-    """Convert the REAL_G1 action dict into absolute (14,) ARM_JOINTS targets.
+def _action_to_arm_trajectory(action: dict, current: np.ndarray) -> np.ndarray:
+    """Convert a REAL_G1 action chunk to absolute ``(T, 14)`` arm poses.
 
-    Policy actions are RELATIVE (deltas). We integrate delta[0] (first step of
-    the 40-step chunk) into absolute targets. left_arm and right_arm are
-    absolute/non-eef? No - REAL_G1 uses RELATIVE for arm (see action_configs).
-    So we add the delta to the current joint position; the caller passes the
-    current joints so we can do this here. For the first open-loop hold test
-    the caller sends current joints, so:
+    The GR00T REAL_G1 arm keys are relative joint deltas. The browser needs the
+    whole horizon to scrub a trajectory, while the legacy control path still
+    consumes the first absolute pose. WBC-owned waist/base outputs are ignored.
     """
-    # left/right arm are 7-D each, relative.
-    da_l = action["left_arm"][0, 0, :].astype(np.float32)   # (7,) first step
-    da_r = action["right_arm"][0, 0, :].astype(np.float32)
-    # hands are ABSOLUTE (gripper). We do not command hands here (no gripper DOF
-    # on the 29-DOF G1 in this sim); ignore hand actions.
-    # waist/bh/nav commands are WBC territory - ignore, the sim's Balance
-    # policy owns those.
-    return np.concatenate([da_l, da_r])
+    left = np.asarray(action["left_arm"], dtype=np.float32)
+    right = np.asarray(action["right_arm"], dtype=np.float32)
+    if left.ndim == 3:
+        left = left[0]
+    if right.ndim == 3:
+        right = right[0]
+    if left.ndim == 1:
+        left = left[None, :]
+    if right.ndim == 1:
+        right = right[None, :]
+
+    horizon = min(left.shape[0], right.shape[0])
+    deltas = np.concatenate([left[:horizon], right[:horizon]], axis=1)
+    trajectory = current[None, :] + np.cumsum(deltas, axis=0)
+    return np.clip(trajectory, -2.6, 2.6).astype(np.float32)
 
 
 class Gr00tArmServer:
@@ -180,8 +183,8 @@ class Gr00tArmServer:
         return self._policy, self._mc
 
     def infer(self, rgb_b64: str | None, joint_names: list[str],
-              joint_positions: list[float], text_cmd: str | None) -> list[float]:
-        """Return absolute 14-D (ARM_JOINTS-ordered) arm targets."""
+              joint_positions: list[float], text_cmd: str | None) -> dict[str, object]:
+        """Return the full arm trajectory and its first executable pose."""
         pol, mc = self.policy
         # decode rgb
         rgb_np = None
@@ -189,8 +192,7 @@ class Gr00tArmServer:
             try:
                 raw = base64.b64decode(rgb_b64)
                 from PIL import Image
-                import numpy as _np
-                rgb_np = _np.asarray(Image.open(io.BytesIO(raw)).convert("RGB"))
+                rgb_np = np.asarray(Image.open(io.BytesIO(raw)).convert("RGB"))
             except Exception as e:
                 print(f"[GR00T] rgb decode fail: {e!r}", flush=True)
         obs = _build_observation(mc, rgb_np, joint_names, joint_positions)
@@ -200,13 +202,25 @@ class Gr00tArmServer:
             lang_key = "annotation.human.task_description"
         obs["language"] = {lang_key: [[text_cmd or "hold a box"]]}
         action, _info = pol.get_action(obs)
-        delta = _action_to_arm_targets(action)
-        # integrate delta onto current absolute pose -> hold test means deltas ~0
-        self._current_arm = self._current_arm + delta
-        # clip to sane joint ranges (G1 arm ±2.6 rad)
-        self._current_arm = np.clip(self._current_arm, -2.6, 2.6)
+        by_name = dict(zip(joint_names, joint_positions))
+        observed = np.array(
+            [by_name.get(name, self._current_arm[index])
+             for index, name in enumerate(ARM_JOINTS)],
+            dtype=np.float32,
+        )
+        trajectory = _action_to_arm_trajectory(action, observed)
+        self._current_arm = trajectory[0].copy()
         self._hold_count += 1
-        return self._current_arm.tolist()
+        return {
+            "position": self._current_arm.tolist(),
+            "trajectory": trajectory.tolist(),
+            "q0": observed.tolist(),
+            "horizon": int(trajectory.shape[0]),
+            "joint_names": ARM_JOINTS,
+            "relative_deltas": True,
+            "preview_only": True,
+            "dispatch": "explicit_ui_approval_required",
+        }
 
     def current_targets(self) -> list[float]:
         return self._current_arm.tolist()
@@ -237,19 +251,29 @@ async def handle(ws, path=None, server=None):
 
             # throttle: 1 policy inference per observation (laptop sends ~5 Hz)
             try:
-                targets = server.infer(rgb_b64, names, pos, text_cmd)
+                started = time.perf_counter()
+                prediction = server.infer(rgb_b64, names, pos, text_cmd)
+                infer_ms = (time.perf_counter() - started) * 1000
                 self_t = time.time()
-                # round-trip RTT log
-                rtt = time.time() - t
+                rtt = self_t - t
                 print(f"[WS] {client} t={t:.3f} rtt={rtt*1000:.0f}ms "
-                      f"arms={len(targets)}J held={server._hold_count}", flush=True)
-                reply = {
+                      f"horizon={prediction['horizon']} infer={infer_ms:.0f}ms "
+                      f"arms={len(prediction['position'])}J held={server._hold_count}", flush=True)
+                await ws.send(json.dumps({
                     "type": "arm_cmd",
                     "t": round(self_t, 4),
                     "name": ARM_JOINTS,
-                    "position": targets,
-                }
-                await ws.send(json.dumps(reply))
+                    "position": prediction["position"],
+                    "trajectory": prediction["trajectory"],
+                    "q0": prediction["q0"],
+                    "horizon": prediction["horizon"],
+                    "joint_names": prediction["joint_names"],
+                    "relative_deltas": prediction["relative_deltas"],
+                    "preview_only": True,
+                    "dispatch": prediction["dispatch"],
+                    "rtt_ms": rtt * 1000,
+                    "infer_ms": infer_ms,
+                }))
             except Exception as e:
                 # don't drop the connection on a single bad frame
                 print(f"[WS] infer error: {e!r}", flush=True)
@@ -261,6 +285,10 @@ async def handle(ws, path=None, server=None):
                         "t": round(time.time(), 4),
                         "name": ARM_JOINTS,
                         "position": server.current_targets(),
+                        "trajectory": [server.current_targets()],
+                        "horizon": 1,
+                        "preview_only": True,
+                        "dispatch": "explicit_ui_approval_required",
                     }))
     except Exception as e:
         print(f"[WS] client {client} disconnected: {e!r}", flush=True)

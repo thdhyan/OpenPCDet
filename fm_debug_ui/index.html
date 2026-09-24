@@ -61,6 +61,15 @@
   .schema-row .shape { color: #a5d6a7; font-size: 10px; }
   .conn-info { font-size: 11px; color: var(--dim); margin-top: 4px; }
   .full-width { width: 100%; }
+  .preview-toolbar { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+  .preview-toolbar input[type="range"] { flex: 1; min-width: 180px; accent-color: var(--accent); }
+  .preview-note { color: var(--warn); font-size: 11px; margin-top: 8px; }
+  .preview-status { color: var(--dim); font-size: 11px; margin-top: 6px; }
+  .preview-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 13px; pointer-events: none; }
+  .preview-ready .preview-empty { display: none; }
+  .preview-canvas { position: relative; width: 100%; min-height: 500px; }
+  .preview-canvas canvas { width: 100%; height: 500px; display: block; }
+  .preview-send { margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -201,15 +210,24 @@
     <!-- 3D VIEW -->
     <div id="view-3d-view" class="view-content" style="display:none">
       <div class="section">
-        <h2>URDF 3D Visualization</h2>
-        <div class="canvas-container" style="min-height:500px;position:relative">
+        <h2>URDF Kinematic Preview — Physics Disabled</h2>
+        <div id="preview-panel" class="preview-canvas">
           <canvas id="canvas-3d" width="800" height="600"></canvas>
+          <div id="preview-empty" class="preview-empty">Waiting for a GR00T action trajectory…</div>
           <div style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.7);padding:4px 8px;border-radius:4px;font-size:11px">
-            <div style="color:#4caf50">● Robot</div>
-            <div style="color:#ff9800">● Target EEF</div>
-            <div style="color:#4a9eff">● Action trajectory</div>
+            <div style="color:#4caf50">● G1 visual URDF</div>
+            <div style="color:#4a9eff">● Selected predicted pose</div>
+            <div style="color:#ff9800">● End-effector trajectory</div>
           </div>
         </div>
+        <div class="preview-toolbar">
+          <button id="preview-play" onclick="togglePreviewPlayback()" disabled>▶ Play</button>
+          <input id="trajectory-slider" type="range" min="0" max="0" value="0" step="1" oninput="previewStep(this.value)" disabled>
+          <span id="trajectory-label" class="preview-status">No trajectory</span>
+        </div>
+        <div class="preview-note">Preview only. The selected pose is sent to ROS <code>/g1/arm_cmd</code> only after an explicit dispatch click.</div>
+        <button id="preview-send" class="preview-send danger" onclick="sendSelectedPreview()" disabled>Dispatch selected pose to simulator</button>
+        <div id="preview-dispatch-status" class="preview-status"></div>
       </div>
     </div>
 
@@ -280,7 +298,10 @@
     logs: [],
     lastOutput: null,
     outputHistory: [],
-    currentTab: 'input'
+    currentTab: 'input',
+    trajectory: [],
+    trajectoryStep: 0,
+    previewTimer: null
   };
 
   // ===== SCHEMA DEFINITIONS =====
@@ -385,6 +406,7 @@
     document.querySelectorAll('.view-content').forEach(v => v.style.display = 'none');
     document.querySelector(`[onclick="switchView('${tab}')"]`).classList.add('active');
     document.getElementById(`view-${tab}`).style.display = 'block';
+    window.dispatchEvent(new CustomEvent('fm:view', {detail: {tab}}));
   }
 
   // ===== WEBSOCKET =====
@@ -477,6 +499,9 @@
       // Show output
       document.getElementById('action-output-view').textContent = JSON.stringify(msg, null, 2);
       document.getElementById('json-view').textContent = JSON.stringify(msg, null, 2);
+      if (Array.isArray(msg.trajectory) && msg.trajectory.length) {
+        setPreviewTrajectory(msg);
+      }
 
       // Add to history
       state.outputHistory.unshift({t: Date.now(), model: state.model, schema: state.outputSchema, data: msg});
@@ -534,15 +559,89 @@
     }
   }
 
-  // ===== 3D VIEW =====
-  function init3DView() {
-    const canvas = document.getElementById('canvas-3d');
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#0a0a0a';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#4caf50';
-    ctx.font = '12px monospace';
-    ctx.fillText('3D URDF visualization (Three.js integration pending)', 20, 30);
+  // ===== KINEMATIC PREVIEW CONTROLS =====
+  function setPreviewTrajectory(msg) {
+    const names = msg.name || msg.joint_names || [];
+    const width = names.length || (Array.isArray(msg.trajectory?.[0]) ? msg.trajectory[0].length : 14);
+    const trajectory = msg.trajectory.filter(step => Array.isArray(step) && step.length === width);
+    if (!trajectory.length) return;
+    state.trajectory = trajectory;
+    state.trajectoryStep = 0;
+    const slider = document.getElementById('trajectory-slider');
+    slider.max = String(trajectory.length - 1);
+    slider.value = '0';
+    slider.disabled = false;
+    document.getElementById('preview-play').disabled = false;
+    document.getElementById('preview-send').disabled = false;
+    document.getElementById('preview-panel').classList.add('preview-ready');
+    updatePreviewLabel();
+    window.dispatchEvent(new CustomEvent('fm:trajectory', {detail: {trajectory, names: msg.name || msg.joint_names}}));
+    log(`Loaded ${trajectory.length}-step arm trajectory for kinematic preview`, 'ok');
+  }
+
+  function previewStep(value) {
+    state.trajectoryStep = Math.max(0, Math.min(state.trajectory.length - 1, Number(value)));
+    updatePreviewLabel();
+    window.dispatchEvent(new CustomEvent('fm:preview-step', {detail: {step: state.trajectoryStep}}));
+  }
+
+  function updatePreviewLabel() {
+    const label = document.getElementById('trajectory-label');
+    if (!state.trajectory.length) {
+      label.textContent = 'No trajectory';
+      return;
+    }
+    label.textContent = `step ${state.trajectoryStep + 1} / ${state.trajectory.length}`;
+  }
+
+  function togglePreviewPlayback() {
+    if (state.previewTimer !== null) {
+      clearInterval(state.previewTimer);
+      state.previewTimer = null;
+      document.getElementById('preview-play').textContent = '▶ Play';
+      return;
+    }
+    if (!state.trajectory.length) return;
+    document.getElementById('preview-play').textContent = '❚❚ Pause';
+    state.previewTimer = setInterval(() => {
+      const next = (state.trajectoryStep + 1) % state.trajectory.length;
+      document.getElementById('trajectory-slider').value = String(next);
+      previewStep(next);
+    }, 100);
+  }
+
+  function sendSelectedPreview() {
+    if (!state.simWs || state.simWs.readyState !== 1) {
+      log('Simulator bridge is not connected; preview was not dispatched', 'warn');
+      document.getElementById('preview-dispatch-status').textContent = 'Not sent: simulator bridge is disconnected.';
+      return;
+    }
+    if (!state.trajectory.length) return;
+    const position = state.trajectory[state.trajectoryStep];
+    state.simWs.send(JSON.stringify({
+      type: 'arm_cmd',
+      name: state.lastOutput?.name || state.lastOutput?.joint_names,
+      position,
+      source: 'fm_debug_ui_explicit_approval',
+      preview_step: state.trajectoryStep,
+    }));
+    document.getElementById('preview-dispatch-status').textContent = `Dispatch requested for preview step ${state.trajectoryStep + 1}.`;
+    log(`Explicit dispatch requested for preview step ${state.trajectoryStep + 1}`, 'warn');
+  }
+
+  function loadDemoPreview() {
+    const names = [
+      'left_shoulder_pitch_joint', 'left_shoulder_roll_joint', 'left_shoulder_yaw_joint',
+      'left_elbow_joint', 'left_wrist_roll_joint', 'left_wrist_pitch_joint', 'left_wrist_yaw_joint',
+      'right_shoulder_pitch_joint', 'right_shoulder_roll_joint', 'right_shoulder_yaw_joint',
+      'right_elbow_joint', 'right_wrist_roll_joint', 'right_wrist_pitch_joint', 'right_wrist_yaw_joint',
+    ];
+    const trajectory = Array.from({length: 40}, (_, step) => {
+      const phase = step / 39 * Math.PI * 2;
+      return names.map((_, joint) => 0.25 * Math.sin(phase + joint * 0.18));
+    });
+    state.lastOutput = {name: names, trajectory, horizon: trajectory.length, preview_only: true};
+    setPreviewTrajectory(state.lastOutput);
   }
 
   // ===== UTILITIES =====
@@ -587,6 +686,18 @@
     state.actionCount = 0;
     state.errorCount = 0;
     state.outputHistory = [];
+    state.trajectory = [];
+    state.trajectoryStep = 0;
+    if (state.previewTimer !== null) clearInterval(state.previewTimer);
+    state.previewTimer = null;
+    document.getElementById('trajectory-slider').value = '0';
+    document.getElementById('trajectory-slider').disabled = true;
+    document.getElementById('preview-play').disabled = true;
+    document.getElementById('preview-send').disabled = true;
+    document.getElementById('preview-panel').classList.remove('preview-ready');
+    document.getElementById('preview-dispatch-status').textContent = '';
+    updatePreviewLabel();
+    window.dispatchEvent(new CustomEvent('fm:trajectory', {detail: {trajectory: [], names: []}}));
     document.getElementById('m-actions').textContent = '0';
     document.getElementById('m-errors').textContent = '0';
     document.getElementById('output-history').textContent = 'No outputs yet...';
@@ -635,18 +746,23 @@
   document.addEventListener('DOMContentLoaded', () => {
     updateSchemaPreview();
     updateStatus();
-    init3DView();
     log('Foundation Model Debug UI initialized', 'info');
 
     // Load robot info
     fetch('/api/robot/g1-29dof')
       .then(r => r.json())
       .then(d => {
-        document.getElementById('robot-info').textContent = `${d.name} | ${d.num_joints} joints | ${d.total_dof} DOF`;
+        document.getElementById('robot-info').textContent = `${d.name} | ${d.num_joints} joints | ${d.total_dof} DOF | visual URDF ready`;
       })
       .catch(() => {
         document.getElementById('robot-info').textContent = 'URDF info unavailable';
       });
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('view')) switchView(params.get('view'));
+    if (params.get('demo') === '1') {
+      setTimeout(loadDemoPreview, 250);
+    }
   });
 
   // FPS counter
@@ -655,6 +771,161 @@
     const fps = state.actionCount / elapsed;
     document.getElementById('m-fps').textContent = fps.toFixed(1);
   }, 1000);
+</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/examples/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "urdf-loader": "https://cdn.jsdelivr.net/npm/urdf-loader@0.12.6/src/URDFLoader.js"
+  }
+}
+</script>
+<script type="module">
+  import * as THREE from 'three';
+  import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+  import URDFLoader from 'urdf-loader';
+
+  const canvas = document.getElementById('canvas-3d');
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0a0a0a);
+  const camera = new THREE.PerspectiveCamera(45, 800 / 600, 0.01, 100);
+  camera.position.set(2.4, 1.7, 3.2);
+
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({canvas, antialias: true});
+  } catch (error) {
+    document.getElementById('preview-empty').textContent = 'WebGL is unavailable in this browser.';
+    throw error;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(800, 600, false);
+  renderer.shadowMap.enabled = true;
+
+  const controls = new OrbitControls(camera, canvas);
+  controls.target.set(0, 0.85, 0);
+  controls.enableDamping = true;
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x303030, 2.0));
+  const keyLight = new THREE.DirectionalLight(0xffffff, 2.5);
+  keyLight.position.set(2, 4, 3);
+  scene.add(keyLight);
+  const grid = new THREE.GridHelper(4, 20, 0x4a9eff, 0x1b3047);
+  grid.position.y = 0;
+  scene.add(grid);
+
+  let robot = null;
+  let jointNames = [];
+  let trajectory = [];
+  let selectedStep = 0;
+  const trajectoryGroup = new THREE.Group();
+  scene.add(trajectoryGroup);
+
+  function setRobotPose(step) {
+    if (!robot || !jointNames.length || !trajectory.length) return;
+    const pose = trajectory[Math.max(0, Math.min(step, trajectory.length - 1))];
+    jointNames.forEach((name, index) => {
+      if (name in robot.joints && Number.isFinite(pose[index])) {
+        robot.setJointValue(name, pose[index]);
+      }
+    });
+  }
+
+  function clearTrajectory() {
+    while (trajectoryGroup.children.length) {
+      const child = trajectoryGroup.children.pop();
+      child.geometry?.dispose();
+      child.material?.dispose();
+    }
+  }
+
+  function drawTrajectory() {
+    clearTrajectory();
+    if (!robot || trajectory.length < 2) return;
+    const points = {left: [], right: []};
+    const originalStep = selectedStep;
+    for (let index = 0; index < trajectory.length; index += 1) {
+      setRobotPose(index);
+      robot.updateMatrixWorld(true);
+      const left = robot.getObjectByName('left_wrist_yaw_link');
+      const right = robot.getObjectByName('right_wrist_yaw_link');
+      if (left) points.left.push(left.getWorldPosition(new THREE.Vector3()));
+      if (right) points.right.push(right.getWorldPosition(new THREE.Vector3()));
+    }
+    setRobotPose(originalStep);
+    for (const [side, sidePoints] of Object.entries(points)) {
+      if (sidePoints.length < 2) continue;
+      const geometry = new THREE.BufferGeometry().setFromPoints(sidePoints);
+      const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({
+        color: side === 'left' ? 0x4a9eff : 0xce93d8,
+      }));
+      trajectoryGroup.add(line);
+      for (const point of sidePoints) {
+        const marker = new THREE.Mesh(
+          new THREE.SphereGeometry(0.012, 8, 8),
+          new THREE.MeshBasicMaterial({color: 0xff9800}),
+        );
+        marker.position.copy(point);
+        trajectoryGroup.add(marker);
+      }
+    }
+  }
+
+  function resize() {
+    const width = Math.max(320, canvas.clientWidth || 800);
+    const height = 500;
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    renderer.setSize(width, height, false);
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+
+  const loader = new URDFLoader();
+  loader.load('/assets/g1_29dof.urdf', (loadedRobot) => {
+    robot = loadedRobot;
+    robot.traverse((node) => {
+      if (node.isMesh) {
+        node.castShadow = true;
+        node.receiveShadow = true;
+      }
+    });
+    // URDF is Z-up; Three.js scene uses Y-up.
+    robot.rotation.x = -Math.PI / 2;
+    scene.add(robot);
+    const box = new THREE.Box3().setFromObject(robot);
+    const center = box.getCenter(new THREE.Vector3());
+    robot.position.sub(center);
+    controls.target.set(0, 0, 0);
+    resize();
+    drawTrajectory();
+  }, undefined, (error) => {
+    document.getElementById('preview-empty').textContent = `URDF load failed: ${error}`;
+  });
+
+  window.addEventListener('fm:trajectory', (event) => {
+    trajectory = event.detail.trajectory || [];
+    jointNames = event.detail.names || [];
+    selectedStep = 0;
+    drawTrajectory();
+  });
+  window.addEventListener('fm:preview-step', (event) => {
+    selectedStep = event.detail.step;
+    setRobotPose(selectedStep);
+  });
+  window.addEventListener('fm:view', (event) => {
+    if (event.detail.tab === '3d-view') {
+      resize();
+      setRobotPose(selectedStep);
+    }
+  });
+  new ResizeObserver(resize).observe(canvas.parentElement);
+  animate();
 </script>
 </body>
 </html>

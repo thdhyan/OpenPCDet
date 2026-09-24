@@ -58,18 +58,28 @@ services:
     depends_on:
       - fm-ui
 
-  # ── Sim WebSocket Bridge (streams camera + joints to UI) ──────────────────
+  # ── Sim WebSocket Bridge (same Isaac image; shares host DDS) ───────────────
   sim-ws:
-    image: python:3.12-slim
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: sim-ws-bridge
     network_mode: host
+    ipc: host
+    privileged: true
     volumes:
       - ../:/workspace/thesis-sim
     working_dir: /workspace/thesis-sim
+    environment:
+      - ROS_DOMAIN_ID=0
+      - ROS_DISTRO=jazzy
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - LD_LIBRARY_PATH=/isaac-sim/exts/isaacsim.ros2.core/jazzy/lib
+      - PYTHONPATH=/isaac-sim/exts/isaacsim.ros2.core/jazzy/rclpy
+      - ISAAC_SIM_ROOT=/isaac-sim
     command: >
-      bash -c "pip install -q websockets numpy Pillow aiohttp &&
-               (source /opt/ros/jazzy/setup.bash 2>/dev/null || true) &&
-               python scripts/sim_ws_bridge.py --port 8766 --rate-hz 10"
+      bash -lc "/isaac-sim/python.sh -m pip install -q websockets Pillow &&
+               /isaac-sim/python.sh scripts/sim_ws_bridge.py --port 8766 --rate-hz 10"
     depends_on:
       - isaac-sim
     restart: unless-stopped

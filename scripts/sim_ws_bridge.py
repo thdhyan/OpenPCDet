@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Isaac Sim WebSocket Bridge — streams camera + joint state to the UI.
+"""Isaac Sim WebSocket Bridge — streams camera, joints, and approved arm targets.
 
-Runs INSIDE the Isaac Sim Docker container. Subscribes to ROS2 topics
-(/g1/camera/rgb, /g1/camera/depth, /g1/joint_states) and forwards them
-over WebSocket to the Foundation Model Debug UI.
+Runs INSIDE the Isaac Sim container that owns the ROS 2 graph. It subscribes to
+``/g1/camera/rgb``, ``/g1/camera/depth``, and ``/g1/joint_states`` and forwards
+them to the Foundation Model Debug UI. The UI may send an explicit ``arm_cmd``
+message; only validated 14-joint arm targets are queued for publication on
+``/g1/arm_cmd``. No model action is automatically forwarded.
 
 Run (inside container):
   python scripts/sim_ws_bridge.py --port 8766
@@ -28,6 +30,14 @@ except ImportError:
 
 log = logging.getLogger("sim-ws-bridge")
 
+ARM_JOINTS = frozenset({
+    "left_shoulder_pitch_joint", "left_shoulder_roll_joint", "left_shoulder_yaw_joint",
+    "left_elbow_joint", "left_wrist_roll_joint", "left_wrist_pitch_joint", "left_wrist_yaw_joint",
+    "right_shoulder_pitch_joint", "right_shoulder_roll_joint", "right_shoulder_yaw_joint",
+    "right_elbow_joint", "right_wrist_roll_joint", "right_wrist_pitch_joint", "right_wrist_yaw_joint",
+})
+MAX_ARM_JOINT_RAD = 3.0
+
 
 class SimBridge:
     """WebSocket server that streams sim data to connected UI clients."""
@@ -39,6 +49,7 @@ class SimBridge:
         self.latest_rgb: str | None = None
         self.latest_depth: str | None = None
         self.latest_joints: dict | None = None
+        self._pending_arm_command: tuple[list[str], list[float]] | None = None
         self._running = False
 
     async def start(self):
@@ -64,6 +75,35 @@ class SimBridge:
                         "message": "subscribed",
                         "topics": data.get("topics", []),
                         "rate_hz": self.rate_hz,
+                    }))
+                elif data.get("type") == "arm_cmd":
+                    names = data.get("name", [])
+                    positions = data.get("position", [])
+                    try:
+                        finite_positions = [float(position) for position in positions]
+                    except (TypeError, ValueError):
+                        finite_positions = []
+                    valid = (
+                        names
+                        and len(names) == len(positions)
+                        and len(names) <= len(ARM_JOINTS)
+                        and set(names) <= ARM_JOINTS
+                        and len(finite_positions) == len(positions)
+                        and all(np.isfinite(finite_positions))
+                        and all(abs(position) <= MAX_ARM_JOINT_RAD for position in finite_positions)
+                    )
+                    if not valid:
+                        await ws.send(json.dumps({
+                            "type": "error",
+                            "message": "arm_cmd rejected: expected finite arm joint targets within ±3.0 rad",
+                        }))
+                        continue
+                    self._pending_arm_command = (list(names), [float(p) for p in positions])
+                    log.info(f"Client {client_id} queued {len(names)} approved arm targets")
+                    await ws.send(json.dumps({
+                        "type": "status",
+                        "message": "arm_cmd queued",
+                        "joints": len(names),
                     }))
         except websockets.exceptions.ConnectionClosed:
             pass
@@ -108,6 +148,10 @@ class SimBridge:
 
     def update_joints(self, names: list, positions: list):
         self.latest_joints = {"name": names, "position": positions, "t": time.time()}
+
+    def take_pending_arm_command(self) -> tuple[list[str], list[float]] | None:
+        command, self._pending_arm_command = self._pending_arm_command, None
+        return command
 
 
 async def ros_bridge_task(bridge: SimBridge):
@@ -189,6 +233,7 @@ async def ros_bridge_task(bridge: SimBridge):
     node.create_subscription(Image, "/g1/camera/rgb", on_rgb, qos)
     node.create_subscription(Image, "/g1/camera/depth", on_depth, qos)
     node.create_subscription(JointState, "/g1/joint_states", on_joints, qos)
+    arm_publisher = node.create_publisher(JointState, "/g1/arm_cmd", qos)
 
     log.info("ROS2 subscriptions created — waiting for data")
 
@@ -200,7 +245,15 @@ async def ros_bridge_task(bridge: SimBridge):
     t.start()
 
     while True:
-        await asyncio.sleep(1.0)
+        pending = bridge.take_pending_arm_command()
+        if pending is not None:
+            names, positions = pending
+            command = JointState()
+            command.name = names
+            command.position = positions
+            arm_publisher.publish(command)
+            log.info(f"Published approved arm targets to /g1/arm_cmd ({len(names)} joints)")
+        await asyncio.sleep(0.01)
 
 
 def main():

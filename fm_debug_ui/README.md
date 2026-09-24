@@ -2,9 +2,9 @@
 
 Web UI for inspecting GR00T, Cosmos3-Edge, and Cosmos3-Nano inputs and outputs.
 
-![Foundation Model Debug UI](screenshots/fm-debug-ui.png)
+![Foundation Model Debug UI](screenshots/fm-debug-urdf-preview.png)
 
-*Captured locally on 2026-09-24. The disconnected state is expected until the Isaac Sim and model WebSocket services are running.*
+*Captured locally on 2026-09-24 using the offline demo trajectory. This is the physics-disabled URDF preview; the disconnected indicator is expected until the Isaac Sim and model WebSocket services are running.*
 
 ## Quick Start
 
@@ -66,6 +66,8 @@ through this server's WebSocket proxies.
 ```bash
 # Isaac Sim host / GPU container
 python scripts/g1_warehouse_sim.py --wbc-mode internal --no-ira --config-dir assets/lidar_configs_rotary
+
+# Run this in the same ROS 2 / Isaac Sim environment as the simulator
 python scripts/sim_ws_bridge.py --port 8766 --rate-hz 10
 
 # Model host (for example, spark02)
@@ -77,13 +79,39 @@ In the browser, the defaults are:
 - Model proxy: `ws://localhost:8080/ws/model?model=gr00t`
 - Simulator proxy: `ws://localhost:8080/ws/sim?sim_url=ws://localhost:8766`
 
+The model response now includes the complete arm trajectory:
+
+```json
+{
+  "type": "arm_cmd",
+  "name": ["left_shoulder_pitch_joint", "..."],
+  "position": [/* first absolute pose */],
+  "trajectory": [/* T × 14 absolute poses */],
+  "horizon": 40,
+  "preview_only": true,
+  "dispatch": "explicit_ui_approval_required"
+}
+```
+
+The 3D tab loads `assets/g1_29dof.urdf` with Three.js in the browser. It is a
+**physics-disabled visual URDF**; the slider previews the predicted trajectory.
+The **Dispatch selected pose** button is the only UI path that sends the
+selected arm pose through the simulator bridge to `/g1/arm_cmd`.
+
+For a quick offline UI check without a model or simulator:
+
+```text
+http://localhost:8080/?demo=1&view=3d-view
+```
+
+The direct ROS bridge is preview-only by default. If that older path is used,
+`scripts/ws_sensor_bridge.py` requires the explicit `--send-to-sim` flag before
+it publishes model actions.
+
+The browser module imports Three.js and `urdf-loader` from jsDelivr. The
+simulator/model server does not need internet access, but the browser must be
+able to reach the CDN unless those two frontend packages are vendored later.
+
 The server also exposes `GET /api/models`, `GET /api/schema`,
-`GET /api/robot/g1-29dof`, and `POST /api/ik`.
-
-## Current scope
-
-This is a debugging/inspection surface, not a safety-qualified controller.
-The current 3D tab is a placeholder; live URDF/SE(3) robot rendering and
-CuRobo/IK visualization are the next step. Camera panels populate only when
-`sim_ws_bridge.py` receives ROS 2 camera and joint-state topics.
+`GET /api/robot/g1-29dof`, `GET /assets/g1_29dof.urdf`, and `POST /api/ik`.
 
