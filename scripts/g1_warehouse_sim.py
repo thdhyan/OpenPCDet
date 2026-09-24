@@ -109,8 +109,18 @@ parser.add_argument(
     "as the Gazebo wbc_node) and applies them - your own ROS node drives the "
     "robot. Gains are set in-sim in both modes.",
 )
-parser.add_argument("--no-ira", action="store_true", help="Skip IRA humans/carters; warehouse + G1 only.")
-parser.add_argument("--num-humans", type=int, default=2, help="IRA wandering characters. 0 disables the group.")
+from g1_sim.environments import ENVIRONMENTS, get as get_env  # noqa: E402  (pure python, safe before SimulationApp)
+
+parser.add_argument(
+    "--env",
+    type=str,
+    default="tabletop_wheel",
+    choices=sorted(ENVIRONMENTS),
+    help="Scene preset (g1_sim/environments.py): "
+    + "; ".join(f"{k}: {v.description}" for k, v in ENVIRONMENTS.items()),
+)
+parser.add_argument("--no-ira", action="store_true", help="Skip IRA humans/carters even for --env presets that use IRA.")
+parser.add_argument("--num-humans", type=int, default=None, help="IRA wandering characters (default: the --env preset's). 0 disables the group.")
 parser.add_argument("--num-carters", type=int, default=1, help="IRA wandering Nova Carters. 0 disables the group.")
 parser.add_argument("--ira-seed", type=int, default=42)
 parser.add_argument(
@@ -161,6 +171,15 @@ parser.add_argument(
     "once, at --capture-step, then keep running.",
 )
 parser.add_argument("--capture-step", type=int, default=600, help="Step at which --capture-dir views are taken.")
+parser.add_argument("--log-props", action="store_true", help="Print PhysX positions of /World/Props rigid bodies every 300 steps.")
+parser.add_argument(
+    "--caption",
+    type=str,
+    default=None,
+    metavar="DIR",
+    help="Run Isaac Sim's VLM Scene Caption (isaacsim.replicator.caption.core) on the D435 view once, "
+    "at --capture-step, writing to DIR. Needs NVIDIA_API_KEY or OPENAI_API_KEY (.env); see g1_sim/vlm_caption.py.",
+)
 args_cli = parser.parse_args()
 
 # --xr implies rendering into the VR headset (not headless)
@@ -253,7 +272,10 @@ from g1_sim.warehouse import WAREHOUSE_USD, build_flat_ground, load_environment
 
 ENABLE_ROS2 = not args_cli.no_ros2
 ENABLE_LOCOMOTION = not args_cli.no_locomotion
-ENABLE_IRA = not args_cli.no_ira
+ENV = get_env(args_cli.env)
+ENABLE_IRA = ENV.ira and not args_cli.no_ira
+if args_cli.num_humans is None:
+    args_cli.num_humans = ENV.num_humans
 WBC_CONTROL_HZ = 50.0  # decoupled_wbc's trained control rate
 
 G1_USD = DEFAULT_USD
@@ -295,6 +317,11 @@ def enable_extensions() -> None:
 
         ira_actors.enable_extension()
 
+    if args_cli.caption:
+        from g1_sim import vlm_caption
+
+        vlm_caption.enable()
+
     if not args_cli.headless:
         for ext in GUI_EXTENSIONS:
             manager.set_extension_enabled_immediate(ext, True)
@@ -324,48 +351,6 @@ def build_scene_ira() -> bool:
     )
 
 
-def add_locomanip_props(stage) -> None:
-    """Add Isaac Lab locomanip pick-place props: packing table + steering wheel.
-    Mirrors IsaacContrib-PickPlace-Locomanipulation-G1-Abs env config.
-    """
-    from isaacsim.storage.native import get_assets_root_path
-
-    root = get_assets_root_path()
-    if not root:
-        print("[WH] locomanip props: SKIP - no asset root")
-        return
-
-    # Packing table (kinematic, from Isaac Nucleus)
-    table_usd = f"{root}/Isaac/Props/PackingTable/packing_table.usd"
-    table_prim = stage.DefinePrim("/World/Props/PackingTable", "Xform")
-    table_prim.GetReferences().AddReference(table_usd)
-    table_xform = UsdGeom.Xformable(table_prim)
-    table_xform.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.55, -0.3))
-    table_xform.AddRotateXYZOp().Set(Gf.Vec3d(0.0, 0.0, 0.0))
-    # Make kinematic so it doesn't fall
-    rb_api = UsdPhysics.RigidBodyAPI.Apply(table_prim)
-    UsdPhysics.CollisionAPI.Apply(table_prim)
-    kinematic_attr = rb_api.GetKinematicEnabledAttr()
-    if kinematic_attr:
-        kinematic_attr.Set(True)
-    print(f"[WH] packing table   : added at /World/Props/PackingTable")
-
-    # Steering wheel (dynamic, from Isaac Lab Mimic assets)
-    wheel_usd = f"{root}/IsaacLab/Mimic/pick_place_task/pick_place_assets/steering_wheel.usd"
-    wheel_prim = stage.DefinePrim("/World/Props/SteeringWheel", "Xform")
-    wheel_prim.GetReferences().AddReference(wheel_usd)
-    wheel_xform = UsdGeom.Xformable(wheel_prim)
-    wheel_xform.AddTranslateOp().Set(Gf.Vec3d(-0.35, 0.45, 0.6996))
-    wheel_xform.AddScaleOp().Set(Gf.Vec3f(0.75, 0.75, 0.75))
-    wheel_xform.AddRotateXYZOp().Set(Gf.Vec3d(0.0, 0.0, 0.0))
-    UsdPhysics.RigidBodyAPI.Apply(wheel_prim)
-    UsdPhysics.CollisionAPI.Apply(wheel_prim)
-    # Mass API for realistic grasp
-    mass_api = UsdPhysics.MassAPI.Apply(wheel_prim)
-    mass_api.CreateMassAttr(0.5)
-    print(f"[WH] steering wheel  : added at /World/Props/SteeringWheel")
-
-
 def build_scene_fallback(stage) -> None:
     """Warehouse with no dynamic actors - used when --no-ira is passed or
     IRA's setup failed."""
@@ -377,8 +362,6 @@ def build_scene_fallback(stage) -> None:
         print(f"[WH] warehouse load failed ({e}), using flat ground")
         build_flat_ground(stage)
 
-    # Add locomanip props (table + steering wheel)
-    add_locomanip_props(stage)
 
     for i, (x, y) in enumerate(PEDESTRIANS):
         box = UsdGeom.Cube.Define(stage, f"/World/targets/pedestrian_{i}")
@@ -446,9 +429,13 @@ def main() -> None:
     _log_sensor_settings()
 
     cache_path = REPO / args_cli.cache_scene
+    # The cached stage has no navmesh and no IRA runtime state, so its people
+    # stand still (see ira_actors.save_baked_scene). Any run with humans does a
+    # real IRA setup and leaves the cache alone (it holds a different config).
+    use_cache = args_cli.num_humans == 0
     ira_ok = False
     if ENABLE_IRA:
-        if not args_cli.rebake and cache_path.exists():
+        if use_cache and not args_cli.rebake and cache_path.exists():
             import g1_sim.ira_actors as ira_actors
 
             ira_actors.load_baked_scene(cache_path)
@@ -457,7 +444,7 @@ def main() -> None:
             ira_ok = build_scene_ira()
             if not ira_ok:
                 print("[WH] IRA setup failed - falling back to warehouse with no dynamic actors")
-            else:
+            elif use_cache:
                 import g1_sim.ira_actors as ira_actors
 
                 ira_actors.save_baked_scene(omni.usd.get_context().get_stage(), cache_path)
@@ -469,13 +456,15 @@ def main() -> None:
     if not ira_ok:
         build_scene_fallback(stage)
     else:
-        # Add locomanip props to IRA scene too
-        add_locomanip_props(stage)
         if not args_cli.keep_carter_cameras:
             import g1_sim.ira_actors as ira_actors
 
             stripped = ira_actors.strip_carter_cameras(stage)
             print(f"[WH] carter cameras  : {stripped} deactivated (keep with --keep-carter-cameras)")
+
+    print(f"[WH] env             : {args_cli.env} - {ENV.description}  (IRA {'on' if ira_ok else 'off'})")
+    if ENV.build_props is not None:
+        ENV.build_props(stage)
 
     # G1 always goes on top, regardless of which path built the environment.
     # load_g1 owns the reference + session-layer edit-target dance (rationale
@@ -498,6 +487,8 @@ def main() -> None:
         semantics=labels if (not args_cli.no_camera and ENABLE_ROS2) else None,
         create_articulation=False,
     )
+    if ENV.post_robot is not None:
+        ENV.post_robot(stage, ROBOT_PRIM)
     pelvis_prim = stage.GetPrimAtPath(f"{ROBOT_PRIM}/pelvis")
     print(f"[WH] G1 prim valid   : {stage.GetPrimAtPath(ROBOT_PRIM).IsValid()}  pelvis valid: {pelvis_prim.IsValid()}")
 
@@ -597,6 +588,7 @@ def main() -> None:
     cmd_vel_graph_path = None
     arm_sub = None
     hand_sub = None
+    caption_task = None
     if ENABLE_ROS2:
         # NOT attach_ros2_publishers() here: that OG-graph path's
         # ROS2RtxLidarHelper advertises /livox/mid360/points but never
@@ -614,16 +606,13 @@ def main() -> None:
         if ira_ok:
             import g1_sim.ira_actors as ira_actors
 
-            # Re-enabled 2026-08-10: briefly disabled on the theory that this
-            # graph's "[PoseTree] eInvalid" spam was uniquely responsible for
-            # a stalled boot, but the same spam (just "parent .../World"
-            # eInvalid, no human targets) kept firing with this disabled -
-            # so it isn't the (sole) cause and disabling it bought nothing.
-            # The eInvalid warning itself is still unexplained/unfixed - see
-            # FUTURE_STEPS.md - but it doesn't block this from being useful.
+            # rclpy publisher fed by IRA's runtime agents (the old OmniGraph
+            # TF graph read USD, where IRA characters never move) - see
+            # attach_actor_tf_publishers(). The "[PoseTree] parent ...
+            # eInvalid for '/World'" spam comes from the G1's own graphs.
             actor_prims = ira_actors.discover_actor_prims(stage)
-            actors_graph = ira_actors.attach_actor_tf_publishers(actor_prims)
-            print(f"[WH] actors tf graph : {actors_graph}  ({len(actor_prims)} actors: {actor_prims})")
+            actors_tf = ira_actors.attach_actor_tf_publishers(actor_prims)
+            print(f"[WH] actors tf       : {actors_tf}  ({len(actor_prims)} actors)")
 
             carter_prims = ira_actors.discover_prims_at(stage, "/World/Robots/carters")
             if carter_prims:
@@ -747,6 +736,16 @@ def main() -> None:
 
             if step % 100 == 0:
                 print(f"[WH] step {step:>6}  scans {scans}  points {last_points}")
+            if args_cli.log_props and step % 300 == 1:
+                from g1_sim.environments import log_prop_poses
+
+                log_prop_poses()
+            if args_cli.caption and step == args_cli.capture_step and g1.camera_prim:
+                from g1_sim import vlm_caption
+
+                caption_task = vlm_caption.start(g1.camera_prim, REPO / args_cli.caption)
+            if caption_task is not None:
+                caption_task = vlm_caption.poll(caption_task)
             if args_cli.capture_dir and step == args_cli.capture_step:
                 capture_views(sim, g1, REPO / args_cli.capture_dir)
             if args_cli.steps and step >= args_cli.steps:

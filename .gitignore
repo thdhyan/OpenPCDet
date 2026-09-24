@@ -17,3 +17,6 @@ frames.pdf
 frames.gv
 assets/lidar_configs/
 assets/lidar_configs_light/
+
+# Local secrets (API keys) - never commit
+.env

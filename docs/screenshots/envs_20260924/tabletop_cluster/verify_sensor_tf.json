@@ -1,0 +1,139 @@
+{
+  "/livox/mid360/points/a": {
+    "frame_id": "mid360_link",
+    "scans_used": 10,
+    "points": 130764,
+    "azimuth_10deg_bin_counts": [
+      3687,
+      3683,
+      3678,
+      3704,
+      3704,
+      3712,
+      3683,
+      3694,
+      3679,
+      3683,
+      3658,
+      3691,
+      3689,
+      3274,
+      3046,
+      3614,
+      3556,
+      3634,
+      3662,
+      3679,
+      3689,
+      3002,
+      3313,
+      3719,
+      3744,
+      3741,
+      3713,
+      3697,
+      3709,
+      3708,
+      3726,
+      3738,
+      3704,
+      3725,
+      3713,
+      3713
+    ],
+    "elevation_deg_min": -7.200167199519081,
+    "elevation_deg_max": 52.132877139177126,
+    "elevation_deg_p1_p99": [
+      -6.265130175855268,
+      49.15998395145581
+    ],
+    "azimuth_deg_min": -179.99146727337825,
+    "azimuth_deg_max": 179.99933565035866,
+    "azimuth_10deg_bins_filled": 36,
+    "range_m_min_max": [
+      0.8001427839625173,
+      21.002431886993165
+    ],
+    "world_z_min": -0.008976689801569071,
+    "world_z_p1": -0.008469419217727946,
+    "world_z_max": 3.9951581871942614,
+    "world_z_mean": 0.673076166752911,
+    "floor_points": 65249,
+    "floor_z_mean": -0.0028425692185828615,
+    "floor_z_std": 0.010740138604476063
+  },
+  "/g1/camera/depth/points": {
+    "frame_id": "d435_color_optical_frame",
+    "points": 307200,
+    "camera_origin_world_z": 1.3013788761091245,
+    "world_z_min": 0.0008375331427996624,
+    "world_z_p1": 0.0008517025270845435,
+    "world_z_max": 1.1277454027627987,
+    "world_z_mean": 0.492055848099194,
+    "floor_fraction": 0.27864908854166665,
+    "floor_z_mean": 0.010849488872779367,
+    "floor_z_std": 0.021210423039359834
+  },
+  "/g1/camera/depth/color/points": {
+    "frame_id": "d435_color_optical_frame",
+    "points": 76800,
+    "camera_origin_world_z": 1.3013781304616,
+    "world_z_min": 0.0008384416019855401,
+    "world_z_p1": 0.0008518913232500358,
+    "world_z_max": 1.1277165987084805,
+    "world_z_mean": 0.49203432016942134,
+    "floor_fraction": 0.27903645833333335,
+    "floor_z_mean": 0.010809348205487547,
+    "floor_z_std": 0.021175267291716617
+  },
+  "depth_vs_color_nn": {
+    "median_m": 0.0056975347319780404,
+    "p90_m": 0.020189041289870112
+  },
+  "checks": [
+    {
+      "name": "lidar elevation within -7..52 deg (+-2)",
+      "pass": true
+    },
+    {
+      "name": "lidar elevation spans FOV (>=45 deg)",
+      "pass": true
+    },
+    {
+      "name": "lidar azimuth covers 360 (>=34/36 bins)",
+      "pass": true
+    },
+    {
+      "name": "lidar floor at z~0 (|mean|<0.05)",
+      "pass": true
+    },
+    {
+      "name": "lidar lowest returns near ground (p1 z < 0.10)",
+      "pass": true
+    },
+    {
+      "name": "lidar nothing below floor (min z > -0.10)",
+      "pass": true
+    },
+    {
+      "name": "/g1/camera/depth/points floor at z~0 (|mean|<0.05)",
+      "pass": true
+    },
+    {
+      "name": "/g1/camera/depth/points nothing below floor (min z > -0.10)",
+      "pass": true
+    },
+    {
+      "name": "/g1/camera/depth/color/points floor at z~0 (|mean|<0.05)",
+      "pass": true
+    },
+    {
+      "name": "/g1/camera/depth/color/points nothing below floor (min z > -0.10)",
+      "pass": true
+    },
+    {
+      "name": "depth/points overlaps depth/color/points (median NN < 5 cm)",
+      "pass": true
+    }
+  ]
+}

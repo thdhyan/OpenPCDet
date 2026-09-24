@@ -1,0 +1,37 @@
+== rates (sim time) ==
+  [PASS] /livox/mid360/points/a               10.0 Hz (want >= 2.5)
+  [PASS] /g1/camera/rgb                       59.4 Hz (want >= 2.5)
+  [PASS] /g1/camera/depth                     40.9 Hz (want >= 2.5)
+  [PASS] /g1/camera/depth/points              40.0 Hz (want >= 2.5)
+  [PASS] /g1/camera/depth/color/points        10.0 Hz (want >= 1.5)
+  [PASS] /g1/camera/camera_info               60.0 Hz (want >= 2.5)
+  [PASS] /g1/joint_states                     60.0 Hz (want >= 10.0)
+  [PASS] /g1/imu/pelvis                       60.0 Hz (want >= 10.0)
+  [PASS] /g1/imu/torso                        60.0 Hz (want >= 10.0)
+  [PASS] /livox/mid360/imu                    60.0 Hz (want >= 10.0)
+  [PASS] /g1/camera/imu                       60.0 Hz (want >= 10.0)
+  [PASS] /tf                                  60.0 Hz (want >= 10.0)
+  [PASS] /g1/dex3/left/thumb/contact          60.0 Hz (want >= 10.0)
+  [PASS] /g1/dex3/left/index/contact          60.0 Hz (want >= 10.0)
+  [PASS] /g1/dex3/left/middle/contact         60.0 Hz (want >= 10.0)
+  [PASS] /g1/dex3/right/thumb/contact         60.0 Hz (want >= 10.0)
+  [PASS] /g1/dex3/right/index/contact         60.0 Hz (want >= 10.0)
+  [PASS] /g1/dex3/right/middle/contact        60.0 Hz (want >= 10.0)
+== IMUs at rest ==
+  [PASS] /g1/imu/pelvis         |a|= 9.81 m/s^2  |q|=1.0000  frame=imu_in_pelvis
+  [PASS] /g1/imu/torso          |a|= 9.81 m/s^2  |q|=1.0000  frame=imu_in_torso
+  [PASS] /livox/mid360/imu      |a|= 9.81 m/s^2  |q|=1.0000  frame=mid360_link
+  [PASS] /g1/camera/imu         |a|= 9.81 m/s^2  |q|=1.0000  frame=d435_link
+  [PASS] joint_states: 43 joints (14 Dex3)
+  [PASS] Dex3 TF frames: 8/8
+== Dex3 control: /g1/hand_cmd ==
+  [PASS] fingers curl to 50% of range: max |q - target| = 0.010 rad (tol 0.15)
+  [PASS] fingers reopen to 0: max |q - target| = 0.014 rad (tol 0.15)
+== Arm control: /g1/arm_cmd ==
+  [PASS] shoulders/elbows follow +-0.3 rad: max |q - target| = 0.038 rad (tol 0.1)
+  [PASS] arms return: max |q - target| = 0.023 rad (tol 0.1)
+== WBC walk: cmd_vel vx=-0.3 (backward, away from the table) for 4 sim-seconds ==
+  [PASS] pelvis moved 1.41 m in xy (want > 0.5)
+  [PASS] pelvis z 0.713 m (upright)
+
+RESULT: PASS

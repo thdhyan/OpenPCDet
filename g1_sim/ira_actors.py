@@ -43,6 +43,15 @@ DEFAULT_MAX_NAVMESH_FRAMES = 3000  # ~30x the stock cap; real bake measured ~700
 
 WAREHOUSE_REL = "Isaac/Environments/Simple_Warehouse/warehouse.usd"  # IRA-relative form (no leading slash)
 
+# Human spawn points (x, y, z) around the G1 spawn at the origin, so people walk
+# through the sensors' and capture views' range instead of anywhere in the
+# warehouse. IRA snaps each onto the navmesh; clear of the robot and the env-4
+# boxes (g1_sim.nav_environments).
+HUMAN_SPAWNS = [
+    (3.0, 1.5, 0.0), (-3.0, 2.5, 0.0), (2.5, -2.5, 0.0),
+    (-2.5, -3.0, 0.0), (1.0, 5.0, 0.0), (-4.5, 0.0, 0.0),
+]
+
 
 def write_config(
     path: Path,
@@ -62,7 +71,9 @@ def write_config(
 
     config = {
         "isaacsim.replicator.agent": {
-            "version": "1.6.0",
+            # IRA 1.7.x rejects < 1.7.0 ("no migration was provided") and
+            # setup then silently falls back to a people-free warehouse.
+            "version": "1.7.0",
             "seed": seed,
             "simulation_duration": duration_s,
             "environment": {"base_stage_asset_path": warehouse_rel},
@@ -74,6 +85,7 @@ def write_config(
                 "humans": {
                     "num": num_humans,
                     "asset_path": "Isaac/People/Characters/",
+                    "spawn_positions": [list(p) for p in HUMAN_SPAWNS[:num_humans]],
                     "routines": [
                         {
                             "wander": {
@@ -299,64 +311,69 @@ def attach_carter_imu_publishers(
     return graph_paths
 
 
+_ACTOR_TF = []  # keeps the rclpy node + update subscription alive
+
+
 def attach_actor_tf_publishers(
     actor_prim_paths: list[str],
-    graph_path: str = "/ActionGraph/ActorsTF",
     topic_name: str = "/tf",
 ) -> str | None:
-    """Publish one TF frame per human/Nova Carter (root pose only).
+    """Publish one TF frame per human/Nova Carter (root pose, parent "World",
+    child = the actor's prim name, e.g. ``humans_0``), stamped with sim time.
 
-    Deliberately targets each actor's top-level Xform, not any nested
-    SkelRoot/articulation - ``ROS2PublishTransformTree`` only walks into an
-    articulation tree when the *target* prim itself is an articulation root,
-    so pointing it at the plain wrapper Xform gives exactly one frame per
-    actor instead of exploding into every skeleton bone or wheel joint.
+    Poses come from IRA's runtime agents (``AgentsManager``, created on
+    ``timeline.play()``), not from USD: the behavior system moves characters
+    in Fabric only, so the actor's USD Xform *and* its SkelRoot stay at the
+    spawn point (verified 2026-09-24: USD frozen while the agent walked
+    metres). The previous OmniGraph ``ROS2PublishTransformTree`` on those
+    prims therefore published frozen poses. Runs from the app update stream,
+    so it needs no hook in the main loop.
     """
     if not actor_prim_paths:
         return None
 
-    import omni.graph.core as og
+    import omni.kit.app
+    import rclpy
+    from geometry_msgs.msg import TransformStamped
+    from isaacsim.core.simulation_manager import SimulationManager
+    from omni.metropolis.pipeline.agent import AgentsManager
+    from tf2_msgs.msg import TFMessage
 
-    nodes = [
-        ("OnTick", "omni.graph.action.OnPlaybackTick"),
-        ("Context", "isaacsim.ros2.bridge.ROS2Context"),
-        ("SimTime", "isaacsim.core.nodes.IsaacReadSimulationTime"),
-        ("PublishActorsTF", "isaacsim.ros2.bridge.ROS2PublishTransformTree"),
-    ]
-    connections = [
-        ("OnTick.outputs:tick", "PublishActorsTF.inputs:execIn"),
-        ("Context.outputs:context", "PublishActorsTF.inputs:context"),
-        ("SimTime.outputs:simulationTime", "PublishActorsTF.inputs:timeStamp"),
-    ]
-    values = [
-        ("PublishActorsTF.inputs:topicName", topic_name),
-        # targetPrims is a "target" (relationship) input, not a plain data
-        # attribute - it has to go through SET_VALUES in this same edit()
-        # call. A separate og.Controller.set() after the fact (the first
-        # attempt) silently no-ops on relationship inputs, leaving
-        # targetPrims unset - which is what caused the "[PoseTree] target
-        # getObjectType eInvalid" spam (confirmed live, 2026-08-10): the node
-        # was running with no targets at all. Matches how
-        # attach_robot_state_publishers() below sets targetPrims/parentPrim.
-        ("PublishActorsTF.inputs:targetPrims", actor_prim_paths),
-        # Leaving parentPrim blank ("use World" per the node's own docs) was
-        # the first attempt and produced a second, parallel spam: "[PoseTree]
-        # parent getObjectType eInvalid for '/World'" on every tick, even
-        # after targetPrims was fixed (confirmed live, 2026-08-10) - the
-        # blank-default path doesn't actually resolve cleanly in practice.
-        # Setting it explicitly is what already works for the G1 publisher.
-        ("PublishActorsTF.inputs:parentPrim", ["/World"]),
-    ]
+    if not rclpy.ok():
+        rclpy.init()
+    node = rclpy.create_node("ira_actor_tf")
+    pub = node.create_publisher(TFMessage, topic_name, 10)
+    frames: dict[str, str] = {}  # agent prim path -> actor frame name
+    last = {"t": -1.0}
 
-    og.Controller.edit(
-        {"graph_path": graph_path, "evaluator_name": "execution"},
-        {
-            og.Controller.Keys.CREATE_NODES: nodes,
-            og.Controller.Keys.CONNECT: connections,
-            og.Controller.Keys.SET_VALUES: values,
-        },
-    )
-    return graph_path
+    def on_update(_event) -> None:
+        t = SimulationManager.get_simulation_time()
+        if t == last["t"]:
+            return
+        last["t"] = t
+        msg = TFMessage()
+        for agent in AgentsManager.get_instance().get_runtime_agent_instances():
+            key = agent.prim.GetPath().pathString
+            if key not in frames:  # agent prim is nested under the actor root
+                frames[key] = next((a.rsplit("/", 1)[-1] for a in actor_prim_paths if key.startswith(a + "/") or key == a), "")
+            pos, rot = agent.get_world_position(), agent.get_world_rotation()
+            if not frames[key] or pos is None or rot is None:
+                continue
+            tf = TransformStamped()
+            tf.header.stamp.sec = int(t)
+            tf.header.stamp.nanosec = int((t - int(t)) * 1e9)
+            tf.header.frame_id = "World"
+            tf.child_frame_id = frames[key]
+            tf.transform.translation.x, tf.transform.translation.y, tf.transform.translation.z = pos[0], pos[1], pos[2]
+            q = tf.transform.rotation
+            q.x, q.y, q.z, q.w = rot[0], rot[1], rot[2], rot[3]  # carb.Float4 is xyzw
+            msg.transforms.append(tf)
+        if msg.transforms:
+            pub.publish(msg)
+
+    sub = omni.kit.app.get_app().get_update_event_stream().create_subscription_to_pop(on_update, name="ira_actor_tf")
+    _ACTOR_TF.append((node, pub, sub))
+    return f"rclpy {topic_name} (World -> {', '.join(a.rsplit('/', 1)[-1] for a in actor_prim_paths)})"
 
 
 def run_setup_blocking(
