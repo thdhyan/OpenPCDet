@@ -29,6 +29,28 @@ from typing import Any
 
 import numpy as np
 
+
+def _force_sdpa_attention() -> None:
+    """Make the Unitree Qwen wrapper usable on CUDA 13 aarch64.
+
+    Unitree's released wrapper hard-codes ``flash_attention_2``.  The available
+    Spark wheel is CUDA-12-linked, so SDPA is the safe default; this avoids a
+    hard failure without modifying the external checkout.
+    """
+    from transformers import Qwen2_5_VLForConditionalGeneration
+
+    cls = Qwen2_5_VLForConditionalGeneration
+    if getattr(cls, "_fm_sdpa_patched", False):
+        return
+    original = cls.from_pretrained
+
+    def patched(*args, **kwargs):
+        kwargs["attn_implementation"] = "sdpa"
+        return original(*args, **kwargs)
+
+    cls.from_pretrained = staticmethod(patched)
+    cls._fm_sdpa_patched = True
+
 try:
     import websockets
 except ImportError as exc:  # pragma: no cover - deployment dependency
@@ -121,12 +143,14 @@ def _images_from_message(message: dict[str, Any]) -> list["Image.Image"]:
 
 
 class UnifoLMServer:
-    def __init__(self, ckpt: str, vlm: str, stats_key: str, device: str, use_bf16: bool):
+    def __init__(self, ckpt: str, vlm: str, stats_key: str, device: str,
+                 use_bf16: bool, attention: str = "sdpa"):
         self.ckpt = ckpt
         self.vlm = vlm
         self.stats_key = stats_key
         self.device = device
         self.use_bf16 = use_bf16
+        self.attention = attention
         self.model = None
         self.processor = None
         self.action_stats = None
@@ -145,7 +169,9 @@ class UnifoLMServer:
         import torch
         from unifolm_vla.model.framework.base_framework import baseframework
 
-        log.info("loading UnifoLM checkpoint %s on %s", self.ckpt, self.device)
+        if self.attention == "sdpa":
+            _force_sdpa_attention()
+        log.info("loading UnifoLM checkpoint %s on %s (attention=%s)", self.ckpt, self.device, self.attention)
         model = baseframework.from_pretrained(self.ckpt, vlm_pretrained_path=self.vlm)
         if self.use_bf16:
             model = model.to(dtype=torch.bfloat16)
@@ -256,7 +282,10 @@ async def _handle(ws, server: UnifoLMServer):
 
 
 async def _serve(args: argparse.Namespace):
-    server = UnifoLMServer(args.ckpt, args.vlm, args.unnorm_key, args.device, not args.no_bf16)
+    server = UnifoLMServer(
+        args.ckpt, args.vlm, args.unnorm_key, args.device,
+        not args.no_bf16, args.attention,
+    )
     if args.load:
         server.load()
     async with websockets.serve(
@@ -277,6 +306,8 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8767)
     parser.add_argument("--device", default="cuda" if os.environ.get("CUDA_VISIBLE_DEVICES", "0") != "" else "cpu")
     parser.add_argument("--unnorm-key", default=DEFAULT_STATS_KEY)
+    parser.add_argument("--attention", choices=("sdpa", "flash"), default="sdpa",
+                        help="Qwen attention backend; SDPA is the Spark/CUDA13-safe default")
     parser.add_argument("--load", action="store_true", help="load at startup; default is lazy")
     parser.add_argument("--no-bf16", action="store_true")
     args = parser.parse_args()

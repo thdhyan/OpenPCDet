@@ -44,7 +44,9 @@ The UI server proxies internally to model `:8765` and simulator bridge `:8766`.
      `~/foundation_models/UnifoLM-VLA-Base` (about 19 GB).
    - The required `UnifoLM-VLM-Base` download is in progress.
    - `scripts/unifolm_ws_server.py` is now a lazy EEF23 WebSocket adapter; it
-     refuses joint-only input and never dispatches EEF actions as joints.
+     refuses joint-only input and never dispatches EEF actions as joints. It uses
+  SDPA by default on Spark/CUDA 13 because Unitree's hard-coded FlashAttention
+  wheel is CUDA-12-linked.
    - Full dependency/model-load validation is still pending.
 
 3. **The old N1.5 locomanipulation checkout is historical fallback material only.**
