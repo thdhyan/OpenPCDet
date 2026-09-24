@@ -1,10 +1,93 @@
 # HANDOFF — G1 Foundation Model Testing + TF/Camera/Lidar Alignment
 
-**Status**: CHECKPOINT — Workstream A (sensors/TF/Dex3) DONE and verified in sim (`9a40ebb`); UI and lazy GR00T/UnifoLM services verified on Spark02; UnifoLM GPU load + EEF23 inference + explicit unload verified; AgenticROS rosbridge/MCP images built on `dl`; Isaac ROS/CuVSLAM/NVBlox GPU runtime still pending a free GPU
+**Status**: CHECKPOINT — Workstream A (sensors/TF/Dex3) DONE and verified in sim (`9a40ebb`); scene presets `--env` 1–2 + VLM caption verified (`a8e7e38`), envs 3–5 verifying; UI and lazy GR00T/UnifoLM services verified on Spark02; Isaac ROS 5.0 Spark image/base build completed; cross-distro G1 relay implemented; GPU perception runtime still pending a free Spark GPU
 **Last Updated**: 2026-09-24
 **Repo**: `/home/thakk100/Projects/thesis/G1_sim`
 
 ---
+
+## Scene presets (`--env`) + VLM caption — 2026-09-24
+
+`scripts/g1_warehouse_sim.py --env <name>` picks a scene preset from
+`g1_sim/environments.py` (1–2) and `g1_sim/nav_environments.py` (3–5). Every
+preset keeps the same G1 (29-DoF + Dex3, Mid-360, D435, 4 IMUs) and the same
+in-sim WBC; a preset only decides whether IRA owns the stage, which props are
+built before the robot, and what is attached after. Full evidence and
+gotchas: `docs/screenshots/envs_20260924/README.md`.
+
+| `--env` | Scene | Status |
+|---|---|---|
+| `tabletop_wheel` (default) | 1. packing table + steering wheel | ✅ verified: stable 1000+ steps, in D435 view, `verify_sensor_tf` 11/11, `check_sensor_suite` PASS |
+| `tabletop_cluster` | 2. + wheel, R/G/B cubes, mug, soup can, mustard bottle, banana, foam brick (all semantically labelled) | ✅ verified: stable 800+ steps, both sensor checks pass, captioned |
+| `nav_people` | 3. IRA warehouse, 6 walkers, navmesh hole at the robot | 🔄 screenshots captured, sensor checks pending |
+| `nav_people_boxes` | 4. + big/small box, navmesh holes so people route around them | 🔄 run in progress at commit time |
+| `nav_people_forearm_box` | 5. + box welded to both forearms (elbow lower limit raised to the spawn angle) | ⬜ not started; still carries TEMP debug (`_dbg_box_watch`) |
+
+Rules learned the hard way:
+
+- **Only one Isaac Sim fits the 8 GB GPU.** Every run serializes through
+  `flock /tmp/opencode/g1sim.lock` — never launch a second sim alongside
+  someone else's.
+- Steering-wheel asset URL must be `{root}/Isaac/IsaacLab/Mimic/...`; the old
+  `{root}/IsaacLab/...` 404s and USD only *warns* on an unresolved reference,
+  so the prop spawned as an empty prim. `spawn_usd_prop()` now raises.
+- Never apply `RigidBodyAPI` to an asset root that already has bodies nested
+  under it (wheel, table tray) — they nest and the prop vanishes.
+  `make_rigid()` only adjusts existing bodies, like IsaacLab's `rigid_props`.
+- YCB `Axis_Aligned` meshes are up along −Y inside a Z-up file → rotate −90°
+  about X (+90° gave an upside-down mug / a mustard bottle on its cap).
+- IRA config schema version must be `1.7.0`; `1.6.0` is rejected and setup
+  silently falls back to a people-free warehouse. The baked-scene cache is
+  only used when `--num-humans 0` (cached stages have no navmesh, so people
+  would stand still).
+- Actor `/tf` is published by an rclpy node over IRA's `AgentsManager`
+  runtime poses — the old OmniGraph read USD, where IRA characters never move
+  (Fabric-only motion).
+- `--log-props` prints PhysX positions of every `/World/Props` body every 300
+  steps; `--caption DIR` runs the VLM Scene Caption once at `--capture-step`.
+- Caption model: OpenAI `gpt-6-luna` via the gitignored `.env`
+  (`OPENAI_API_KEY`, ~2 s/request). NVIDIA endpoint: `kimi-k3` ~67 s,
+  `deepseek-v4.1-flash` >150 s, `cosmos`/`nemotron` 404 for this account.
+  `g1_sim/vlm_caption.py` patches IRC in-process (stops it sending
+  `NVIDIA_API_KEY` to OpenAI, drops params gpt-6 rejects, stops merging every
+  labelled prop into one scene-graph node — before that only 1 of 10 objects
+  appeared in the caption).
+
+### Key files
+
+| File | Purpose |
+|---|---|
+| `g1_sim/environments.py` | Presets 1–2 + shared `spawn_usd_prop`/`make_rigid`/`spawn_box`, semantic labels, `log_prop_poses` |
+| `g1_sim/nav_environments.py` | Presets 3–5: navmesh Exclude holes + rebake, big/small boxes, forearm carry box |
+| `g1_sim/vlm_caption.py` | IRC OpenAI adapter, `enable()`/`start()`/`poll()` one-shot caption |
+| `g1_sim/ira_actors.py` | IRA 1.7 config, human spawn points, rclpy actor-TF publisher |
+| `docs/screenshots/envs_20260924/README.md` | Per-env evidence (screenshots, sensor checks, caption output) |
+
+---
+
+## Isaac ROS 5.0 migration — 2026-09-24
+
+- **Primary target is now `aim_spark02` with Isaac ROS 5.0 / ROS 2 Lyrical.**
+  NVIDIA's `release-5.0` `arm64-fastos` base image built successfully as
+  `g1-isaac-ros5-base:5.0.0` on Spark02.
+- Isaac Sim 6.0.1 stays on `dl` with its Jazzy ROS graph. Do not run the 5.0
+  x86 packages on `dl` (driver 590); the old 4.5 image is a legacy fallback.
+- `scripts/ros2_distro_bridge.py` relays the required standard G1 messages
+  over a binary WebSocket from `dl` to Spark. Direct Jazzy↔Lyrical DDS/Zenoh
+  matching is intentionally avoided because distro type hashes are not a
+  safe interoperability boundary. The relay is observation-only.
+- `docker/Dockerfile.isaac-ros5-spark` installs
+  `ros-lyrical-isaac-ros-cuvslam` and `ros-lyrical-nvblox-ros`; the final
+  `g1-isaac-ros5:5.0.0` image is built on Spark02.
+  `docker/docker-compose-isaac-ros5-spark.yml` runs the Spark sink,
+  perception, and read-only AgenticROS rosbridge.
+- The Spark relay self-test and a live cross-distro `/robot_description`
+  WebSocket round-trip passed. The Lyrical rosbridge image also started and
+  listed the sink's RGB/depth/joint/TF topics. The final Spark image exposes
+  both cuVSLAM/NVBlox component plugins and passes the Lyrical entrypoint
+  check. Full RGB/depth/joint/TF + cuVSLAM/NVBlox runtime validation still
+  requires a free Spark GPU; the current Spark training workload must not be
+  killed.
 
 ## CHECKPOINT — 2026-09-24/25 — PAUSE BEFORE TRAVEL
 
@@ -15,6 +98,7 @@
 | Service | Target | Reason |
 |---|---|---|
 | Isaac Sim + RGB/depth/TF/joint bridge | **`dl`** | x86 Docker/Isaac image, 4× RTX 6000 Ada, 503 GiB RAM |
+| Isaac ROS 5.0 cuVSLAM/NVBlox + AgenticROS | **`spark02`** | official DGX Spark `arm64-fastos` support; ROS 2 Lyrical |
 | GR00T N1.7 / UnifoLM GPU servers | **`spark02`** | GB10 GPU; venv now has CUDA-enabled Torch |
 | Foundation Model Debug UI | **`spark02`** with SSH/VPN port-forward if needed | Keeps model processes and UI together |
 | Spark04 | **Do not use for model storage** | Less than 500 GB free, violates fleet storage rule |
@@ -61,20 +145,26 @@ The UI server proxies internally to model `:8765` and simulator bridge `:8766`.
 The repository contains the compose scaffold. The CPU-only AgenticROS
 rosbridge is running on `dl` at `ws://127.0.0.1:9091`; its client-publish
 filter is read-only. The AgenticROS MCP image initializes and lists the
-read-only rosapi graph. The pinned Isaac ROS 4.5 image is built (59.4 GB);
-package, plugin, CUDA 13.0, TensorRT 10.13, NCCL 2.28.9, and launch-argument
-checks pass. The GPU Isaac Sim/CuVSLAM/NVBlox services are **not yet running**
-because all four `dl` GPUs are occupied. Keep the split deployment:
+read-only rosapi graph. The pinned Isaac ROS 4.5 image is retained as a
+legacy dl fallback (59.4 GB); its package, plugin, CUDA 13.0, TensorRT 10.13,
+NCCL 2.28.9, and launch-argument checks pass. The Isaac ROS 5.0 Spark base
+image is built, but the GPU cuVSLAM/NVBlox services are **not yet running**
+because the Spark currently has an unrelated Isaac Sim training workload.
+Keep the split deployment:
 
 ```text
 dl
-└── isaac-sim       :8766 bridge source, GPU
+├── isaac-sim       :8766 bridge source, GPU
+└── ros2-distro-relay-source  Jazzy -> ws://Spark:8768
 
 aim_spark02
-├── gr00t           :8765, GR00T N1.7, GPU
-├── unifolm         :8767, UnifoLM-VLA, GPU
-├── sim-ws client   ROS2 -> WebSocket -> Spark02
-└── fm-ui           :8080, browser UI and WS proxy
+├── ros2-distro-relay-sink   Lyrical republisher
+├── isaac-ros5-perception    cuVSLAM + NVBlox, GPU
+├── agenticros-rosbridge    read-only :9091
+├── gr00t                  :8765, GR00T N1.7, GPU
+├── unifolm                :8767, UnifoLM-VLA, GPU
+├── sim-ws client          ROS2/Jazzy -> WebSocket -> UI
+└── fm-ui                  :8080, browser UI and WS proxy
 ```
 
 Before starting the containers, confirm:
@@ -105,11 +195,15 @@ Joint states are the primary model state. TF is included as supplementary
 state and is displayed in the UI's Dex3-aware TF tree. The new TF path still
 needs a live ROS 2 run test.
 
-The warehouse scene contains the robot and the locomanip props added by `add_locomanip_props()`:
+The warehouse scene's props come from the active `--env` preset
+(`g1_sim/environments.py`, `g1_sim/nav_environments.py`), always under
+`/World/Props`:
 
 ```text
-/World/Props/PackingTable
-/World/Props/SteeringWheel
+/World/Props/PackingTable        envs 1-2
+/World/Props/SteeringWheel       env 1, and env 2's cluster
+/World/Props/{Mug,SoupCan,...}   env 2
+/World/Props/{BigBox,SmallBox}   env 4
 ```
 
 Do not overwrite or regenerate the warehouse USD/USDA until the scene has been visually checked with the table, wheel, robot, RGB, depth, and TF stream in the same run.
@@ -170,40 +264,49 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
   restarting their listeners; a cross-model supervisor and automatic idle
   eviction are still pending.
 
-### Isaac ROS / AgenticROS setup
+### Isaac ROS / AgenticROS setup (current)
 
-- Isaac ROS **4.5** is the current build target for `dl`: ROS 2 Jazzy and CUDA
-  13.0. Isaac ROS 4.6/5.0 currently pull newer CUDA dependencies; 5.0 requires
-  driver 595+, while `dl` reports driver 590.48.01/CUDA 13.1. Isaac Sim 6.0 ↔
-  Isaac ROS 4.5 still needs a runtime compatibility gate.
-- `docker/docker-compose-isaac-ros.yml` adds opt-in `sim`, `perception`, and
-  `agent` profiles. The current G1 RGBD camera is sufficient for CuVSLAM RGBD
-  mode; NVBlox uses the existing depth/RGB/TF stream. LiDAR fusion remains off
-  until the four per-beam Mid-360 topics are merged.
-- `docker/agenticros/` provides a minimal rosbridge sidecar and an AgenticROS
-  MCP image/config. It connects to the existing Isaac Sim graph through
-  `ws://127.0.0.1:9091`; it does not start Gazebo or a second simulator. The
-  bridge blocks client topic publishing. Service/action tools remain available
-  only to an explicitly attached MCP client and must stay behind the UI approval
-  gate. Port 9090 is already occupied by a cockpit service on `dl`.
-- GPU services have not been started because all four `dl` GPUs are currently
-  occupied by unrelated workloads. The CPU-only rosbridge profile is running;
-  start `sim`/`perception` only after selecting a free GPU. The Isaac ROS 4.5
-  image now builds successfully with CUDA 13.0/TensorRT 10.13/NCCL 2.28.9 pins;
-  runtime compatibility with Isaac Sim 6.0 remains the next gate.
+- Isaac ROS **5.0** is the primary Spark target. NVIDIA's `release-5.0`
+  `arm64-fastos` base builds on `aim_spark02`; the Spark image installs
+  `ros-lyrical-isaac-ros-cuvslam` and `ros-lyrical-nvblox-ros`.
+- Isaac Sim 6.0.1 and the source graph remain on `dl`/Jazzy. The source relay
+  is observation-only and carries the standard RGB/depth/camera-info/IMU,
+  43-joint, TF, clock, and robot-description messages to Spark/Lyrical.
+- The old Isaac ROS **4.5** image and `perception` profile are a legacy dl
+  fallback only. The `dl` driver 590 line is not an Isaac ROS 5.0 x86 target.
+- `docker/agenticros/` provides a distro-parameterized read-only rosbridge
+  sidecar and an AgenticROS MCP image/config. It does not start Gazebo or a
+  second simulator. The bridge blocks client topic publishing. Service/action
+  tools remain available only to an explicitly attached MCP client and must
+  stay behind the UI approval gate.
+- GPU services have not been started because the Spark currently has an
+  unrelated Isaac Sim training workload. Do not kill it; wait for a free GPU,
+  then run the Spark `--profile ros5` stack and validate all required topics
+  together.
 
 ---
 
 ### Resume order
 
-0. Do not launch a second model load while another process owns a GPU.
-1. UnifoLM EEF23 smoke inference is complete; keep the service unloaded until
+0. Do not launch a second model load while another process owns a GPU, and
+   never run a second Isaac Sim (8 GB GPU; sim runs go through
+   `flock /tmp/opencode/g1sim.lock`).
+1. Finish scene presets: envs 3–5 verification (`--env nav_people`,
+   `nav_people_boxes`, `nav_people_forearm_box`) — screenshots in
+   `docs/screenshots/envs_20260924/`, then `verify_sensor_tf.py` +
+   `check_sensor_suite.py` per env, then remove the TEMP box debug in
+   `g1_sim/nav_environments.py`.
+2. UnifoLM EEF23 smoke inference is complete; keep the service unloaded until
    an explicit request arrives.
-2. Isaac ROS 4.5 image build and static package/library checks are complete.
-3. Start Isaac Sim + CuVSLAM/NVBlox only after selecting a free GPU; verify RGB,
-   depth, 43 joints, `/tf`, and `/tf_static` together.
-4. Add a multi-process model manager with automatic idle eviction.
-5. Keep WBC on legs/waist and route only joint-space arm/hand trajectories after
+3. Isaac ROS 5.0 Spark base build and the cross-distro relay self-test are
+   complete; the legacy 4.5 image remains available only as a fallback.
+4. When Spark's GPU is free, start Isaac Sim + source relay on `dl`, then the
+   Spark `--profile ros5` sink/perception stack. Verify RGB, depth, 43 joints,
+   `/tf`, `/tf_static`, cuVSLAM odometry/path, and NVBlox mesh/ESDF together.
+5. Start the Spark read-only AgenticROS rosbridge and keep all command/action
+   paths behind explicit UI approval.
+6. Add a multi-process model manager with automatic idle eviction.
+7. Keep WBC on legs/waist and route only joint-space arm/hand trajectories after
    explicit preview approval. UnifoLM EEF output remains non-dispatching until
    a separately validated EEF-to-IK stage exists.
 
@@ -336,7 +439,7 @@ language: annotation.human.task_description
 | `scripts/ws_sensor_bridge.py` | Laptop WS client: subscribes `/g1/camera/rgb`, `/g1/joint_states`; publishes `/g1/arm_cmd` |
 | `scripts/gr00t_ws_server.py` | Spark WS server: loads Gr00tPolicy, returns absolute arm targets |
 | `g1_sim/arm_override.py` | ArmTargetSubscriber: buffers `/g1/arm_cmd` for warehouse loop |
-| `scripts/g1_warehouse_sim.py` | Added `add_locomanip_props()` — packing table + steering wheel |
+| `scripts/g1_warehouse_sim.py` | Added `add_locomanip_props()` — packing table + steering wheel (now superseded by the `--env` presets) |
 
 ### Spark02 Environment
 
@@ -365,9 +468,10 @@ PYTHONPATH=$HOME/UnifoLM-VLA/src nohup ~/venvs/gr00t/bin/python -u \
   --vlm ~/foundation_models/UnifoLM-VLM-Base --attention sdpa --port 8767 \
   > ~/unifolm_ws_server.log 2>&1 </dev/null &
 
-# On laptop: start warehouse sim (Dex3 G1, table + steering wheel)
+# On laptop: start warehouse sim (Dex3 G1 + --env preset; wrap in
+# `flock /tmp/opencode/g1sim.lock` if another agent might also run a sim)
 cd /home/thakk100/Projects/thesis/G1_sim
-tmux new-session -d -s g1sim "bash -c 'set -a; source .envrc; set +a; python -u scripts/g1_warehouse_sim.py --headless --wbc-mode internal --no-ira > /tmp/opencode/warehouse.log 2>&1'"
+tmux new-session -d -s g1sim "bash -c 'set -a; source .envrc; set +a; flock /tmp/opencode/g1sim.lock python -u scripts/g1_warehouse_sim.py --headless --wbc-mode internal --env tabletop_wheel > /tmp/opencode/warehouse.log 2>&1'"
 # RViz (robot_description comes from the sim):
 tmux new-session -d -s g1rviz "bash -c 'source /opt/ros/jazzy/setup.bash; export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0; rviz2 -d rviz/g1_rtx.rviz --ros-args -p use_sim_time:=true'"
 
@@ -412,19 +516,22 @@ tmux ls
 # g1teleop - keyboard WBC control
 ```
 
-### Assets Added (Isaac Lab Locomanip Pick-Place)
+### Assets (Isaac Lab Locomanip Pick-Place — now `--env` presets)
+
+Props are no longer hard-coded in the entrypoint; they live in
+`g1_sim/environments.py` (`build_tabletop_wheel`, `build_tabletop_cluster`):
 
 ```python
 # Packing Table (kinematic)
 prim_path="/World/Props/PackingTable"
-usd_path="{ISAAC_NUCLEUS_DIR}/Props/PackingTable/packing_table.usd"
-pos=[0.0, 0.55, -0.3]  # y=0.55 forward, z=-0.3 (table top ~0.7m)
+usd_path="Isaac/Props/PackingTable/packing_table.usd"   # {ISAAC_NUCLEUS_DIR}
+pos=(0.0, 0.55, -0.3)  # table top at z 0.694 (measured)
 
-# Steering Wheel (dynamic, graspable)
-prim_path="/World/Props/SteeringWheel"
-usd_path="{ISAACLAB_NUCLEUS_DIR}/Mimic/pick_place_task/pick_place_assets/steering_wheel.usd"
-pos=[-0.35, 0.45, 0.6996]  # on table surface
-scale=(0.75, 0.75, 0.75)
+# Steering Wheel (dynamic, graspable) - URL must include the "Isaac/" segment
+prim_path="/World/Props/SteeringWheel/asset"
+usd_path="Isaac/IsaacLab/Mimic/pick_place_task/pick_place_assets/steering_wheel.usd"
+pos=(-0.35, 0.45, 0.6996)
+scale=0.75
 mass=0.5
 ```
 
@@ -463,7 +570,7 @@ Workstream B resume order is at the top of this file. Workstream A:
 | **Arm / Hand Override** | Hold, reach, grasp | `ArmTargetSubscriber` → `/g1/arm_cmd`, `/g1/hand_cmd` (Dex3) |
 | **Foundation Model** | Predict arm targets | GR00T/Cosmos on spark → WebSocket → `/g1/arm_cmd` |
 | **Sensors** | RGB, depth, lidar, joint_states | Isaac Sim RTX + ROS2 bridge |
-| **Props** | Table, steering wheel | USD references in `add_locomanip_props()` |
+| **Props** | Table, wheel, cluster, boxes, carry box | `--env` presets in `g1_sim/environments.py` + `g1_sim/nav_environments.py` |
 
 **Key invariant**: WBC and Foundation Model **never share joints**. WBC owns 15 leg/waist joints; Foundation Model owns 14 arm joints. This decoupling is intentional and working.
 

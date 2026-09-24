@@ -121,6 +121,40 @@ ready (was 43–96 s), 200 steps exit 0, and every ROS 2 topic (RGB, depth,
 `/livox/mid360/points/a`, `/tf`, `/g1/imu`, `/g1/joint_states`) verified live
 from `/opt/ros/jazzy`.
 
+**Scene presets + VLM caption (2026-09-24)**: `--env` presets live in
+`g1_sim/environments.py` (1–2, tabletop) and `g1_sim/nav_environments.py`
+(3–5, navigation) — a preset only supplies IRA/prop/post-robot hooks so every
+scene keeps the identical robot + sensor + WBC stack. Six findings:
+
+1. The steering-wheel reference pointed at `{root}/IsaacLab/…`, which 404s
+   (IsaacLab's dir is `{root}/Isaac/IsaacLab/…`); USD only *warns* on an
+   unresolved reference, so the prop was an empty prim and looked like a
+   physics bug. `spawn_usd_prop()` now raises on an empty reference.
+2. Applying `RigidBodyAPI` to an asset that already carries bodies (wheel,
+   table tray) nested them and made the prop disappear; IsaacLab's
+   `rigid_props` only adjusts existing bodies — `make_rigid()` now mirrors it.
+3. YCB `Axis_Aligned` meshes store "up" along −Y inside a Z-up file →
+   −90° about X, else the mug is upside down and the mustard bottle stands on
+   its cap and tips.
+4. IRA's config schema version must be `1.7.0`; a `1.6.0` config is rejected
+   and setup silently falls back to a people-free warehouse. The baked-scene
+   cache is now only used for 0-human runs (a cached stage has no navmesh, so
+   walkers would stand still).
+5. IRA moves characters in **Fabric only** — the USD Xform *and* SkelRoot
+   stay at the spawn point, so the old OmniGraph `ROS2PublishTransformTree`
+   published frozen poses. Actor `/tf` is now an rclpy publisher fed by
+   `AgentsManager` runtime world poses.
+6. `isaacsim.replicator.caption.core` (VLM Scene Caption) speaks the
+   NVIDIA-NIM dialect and merges every labelled prop into one scene-graph
+   node; against OpenAI it leaked `NVIDIA_API_KEY`, sent params gpt-6 rejects
+   (`max_tokens`, `temperature`, …), and described only 1 of 10 props.
+   `g1_sim/vlm_caption.py` patches all three in-process.
+
+Navigation presets carve `NavMeshVolume` "Exclude" holes (robot footprint,
+boxes) and rebake before `timeline.play()`, since IRA bakes its navmesh before
+any of our props exist and walkers would otherwise path straight through them.
+Evidence: `docs/screenshots/envs_20260924/README.md`.
+
 ## Open technical risk
 
 RTX LiDAR coverage is a **partial band, not a full 360° ring** even after

@@ -47,6 +47,41 @@ Legend: ✅ done · 🔄 in progress · ⛔ blocked · ⬜ not started
   (`g1_rtx_sim.py` remains as the bare-warehouse-free alternative scene per
   its own docstring).
 
+## Scene presets (`--env`) + VLM caption — 2026-09-24
+
+- ✅ **Preset framework** — `--env` picks from `g1_sim/environments.py`
+  (1–2) / `g1_sim/nav_environments.py` (3–5). Props go through
+  `spawn_usd_prop` (raises on an unresolved reference), `make_rigid`
+  (edits existing bodies, never nests), and every prop gets a semantic
+  class label for segmentation/captioning. `--log-props` prints PhysX
+  poses every 300 steps. Committed `a8e7e38`; evidence in
+  `docs/screenshots/envs_20260924/README.md`.
+- ✅ **Env 1 `tabletop_wheel`** — wheel URL 404 (`{root}/IsaacLab/…` →
+  `{root}/Isaac/IsaacLab/…`) and nested-rigid-body bugs fixed; wheel stable
+  at (−0.350, 0.450, 0.698) for 1000+ steps, in the D435 view,
+  `verify_sensor_tf` 11/11, `check_sensor_suite` PASS.
+- ✅ **Env 2 `tabletop_cluster`** — 10 labelled props (wheel, R/G/B cubes,
+  YCB mug/can/bottle/banana/brick); YCB up-axis −90° fix; stable 800+ steps,
+  both sensor checks pass, caption names all 10 objects.
+- 🔄 **Env 3 `nav_people`** — 6 IRA walkers at fixed spawn points, navmesh
+  Exclude hole carved at the robot + rebake (nearest walkable point 0.40 m);
+  screenshots captured, sensor checks still pending.
+- 🔄 **Env 4 `nav_people_boxes`** — + 0.8 m/10 kg and 0.3 m/1 kg boxes with
+  their own navmesh holes (3 holes rebaked); screenshots captured, run in
+  progress at commit time.
+- ⬜ **Env 5 `nav_people_forearm_box`** — box welded to both forearms
+  (FixedJoints excluded from the articulation, elbow lower limit raised to
+  the spawn angle, robot↔box collision filtered). Code written, **not yet
+  run**; `g1_sim/nav_environments.py` still has TEMP debug (`_dbg_box_watch`)
+  to delete after verification.
+- ✅ **VLM caption** — `--caption DIR` runs `isaacsim.replicator.caption.core`
+  once at `--capture-step` (`g1_sim/vlm_caption.py`): OpenAI `gpt-6-luna`
+  ~2 s/req after in-process IRC patches (no NVIDIA-key leak to OpenAI, dropped
+  rejected params, per-prop scene-graph nodes). NVIDIA endpoint is slow
+  (kimi-k3 ~67 s, deepseek >150 s, cosmos/nemotron 404).
+- ⛔ **One sim at a time** — 8 GB GPU; runs serialize through
+  `flock /tmp/opencode/g1sim.lock`. Never start a second sim.
+
 ## RTX LiDAR coverage — three root causes found and fixed ✅ (2026-08-13)
 
 **Root causes (all three present simultaneously):**
