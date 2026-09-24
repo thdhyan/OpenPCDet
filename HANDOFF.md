@@ -1,6 +1,6 @@
 # HANDOFF — G1 Foundation Model Testing + TF/Camera/Lidar Alignment
 
-**Status**: CHECKPOINT — UI server verified on Spark02; Dex3/TF bridge and UI code added; GR00T N1.7 access test running; full Docker stack pending
+**Status**: CHECKPOINT — Workstream A (sensors/TF/Dex3) DONE and verified in sim (`9a40ebb`); UI server verified on Spark02; GR00T N1.7 access test running; full Docker stack pending
 **Last Updated**: 2026-09-23
 **Repo**: `/home/thakk100/Projects/thesis/G1_sim`
 
@@ -161,78 +161,64 @@ this checkpoint, use the checkpoint and resume order above.
 
 | Workstream | Status | Priority |
 |------------|--------|----------|
-| **A. TF/Camera/Lidar Alignment** | 🟡 Dex3/TF code added; live ROS 2 validation pending | **HIGH** |
+| **A. TF/Camera/Lidar + Dex3** | ✅ Verified live (verify_sensor_tf 11/11, check_sensor_suite PASS, test_dex3_contacts PASS); next = TacSL (`docs/TACSL_PLAN.md`) | MEDIUM |
 | **B. Foundation Model Testing (GR00T/UnifoLM/Cosmos)** | 🟡 N1.7 GPU access test running; UnifoLM download running; full services pending | **HIGH** |
 
 ---
 
-## 📋 WORKSTREAM A: TF/CAMERA/LIDAR (PRIORITY)
+## 📋 WORKSTREAM A: SENSORS / TF / DEX3 — DONE (2026-09-23)
 
-### ✅ WORKING
+Everything below was verified live in the headless warehouse sim. Frames are
+recorded in `docs/tf_snapshot_20260923.yaml`; the verifier report is
+`docs/verify_sensor_tf_20260923.json`. **Do not change the robot loading /
+sensor mounts in `g1_sim/g1_robot.py`, `rtx_camera.py`, `rtx_lidar.py`
+without re-running the two check scripts** (the code carries DO NOT CHANGE
+notes).
 
-| Component | Status | Evidence |
-|-----------|--------|----------|
-| **Lidar** (`/livox/mid360/points/a`) | ✅ Fixed | World Z ∈ [-0.04, 3.67], mean 1.74 — floor at z=0 |
-| **Color Depth** (`/g1/camera/depth/color/points`) | ✅ Fixed | Optical frame → world Z ∈ [-0.39, 0.64], mean -0.13 |
-| **Static TF** `d435_link → d435_color_optical_frame` | ✅ Publishes | Quaternion (-0.5, 0.5, -0.5, 0.5) — REP-103 |
-| **Lidar spawn** | ✅ Identity | `spawn_mid360` default = identity (no double 180° roll) |
+### Verify (sim running, `source /opt/ros/jazzy/setup.bash`)
 
-### ⚠️ Validation still required
+```bash
+python3 scripts/verify_sensor_tf.py      # 11 checks: lidar/depth vs TF, floor, FOV
+python3 scripts/check_sensor_suite.py    # rates, IMUs, 43 joints, /g1/hand_cmd, /g1/arm_cmd, WBC walk
+python scripts/test_dex3_contacts.py     # headless (no running sim): 6 fingertip sensors
+```
 
-The Dex3/TF implementation is now in the repository, but the following
-live checks remain:
+### What is true now
 
-- Start Isaac Sim and verify `/tf` and `/tf_static` reach the WebSocket bridge.
-- Confirm the TF panel shows the Dex3 palm/fingertip frames.
-- Re-run the depth/TF alignment check after the Dex3 USD is loaded.
-- Do not claim the full simulator input contract is validated until these
-  checks pass.
+| Area | State |
+|---|---|
+| Robot | G1 29-DoF + Dex3 (`assets/robot/g1_29_dex3/g1_29dof_with_dex3_base_fix.usd`, URL in `g1_robot.DEX3_USD_URL`). `load_g1` deactivates the asset's world-weld `root_joint` (floating base for WBC), 43 DOF, spawn yaw +90° facing the packing table (IsaacLab locomanip pose). |
+| Mid-360 | Real robot is **inverted**. `load_g1` re-authors `mid360_joint` from current unitree_ros rev 1.0 URDF (`xyz 0.0002835 0.00003 0.428434`, `rpy π 0.0511 0`); the asset had a stale upright joint. RTX prim = identity, +15 cm (`lidar_translation=(0,0,-0.15)` in the inverted link); lower and the head mesh eats the downward rays. |
+| Lidar pattern | Real non-repetitive Mid-360: `assets/lidar_configs_solid` (default `--config-dir`) = ONE solid-state emitter state (20k real rays, 100 scan lines); `rtx_lidar.ScanPatternCycler` rewrites it with the next of 40 recorded frames every scan. The engine squeezes elevation with >1 state (10 states → −20…10°) and sweeps azimuth clockwise (author −az). `minReflectance 0.02` keeps grazing floor returns. Regenerate: `python scripts/gen_mid360_solid_config.py`. |
+| Lidar numbers | floor z −0.003 ± 0.010 m, elevation p1/p99 −6.3…49.2°, 36/36 azimuth bins, ~13k pts/scan @ 10 Hz, 0 points above 4 m. |
+| D435 | Prim at `D435_POS` (URDF + 10 cm fwd/up clearance); optical static TF measured from the stage (`rtx_camera.optical_pose_in_link`), vertical aperture follows 640×480, RGBD cloud uses fy = fx. Depth clouds on floor within ~1 cm, depth vs color 0.6 cm median. |
+| ROS | `/g1/joint_states` pos/vel/effort ×43; `/tf` incl. 18 Dex3 frames; `/robot_description` = `assets/robot/g1_29/g1_29dof_with_hand_rev_1_0.urdf` latched by the sim; `/g1/hand_cmd` + `/g1/arm_cmd` (`JointState`, hold-last); `/g1/dex3/<side>/<finger>/contact` (`WrenchStamped`, 60 Hz); 4 IMUs @ 60 Hz. |
+| RViz | `rviz/g1_rtx.rviz`: single `Mid360_A`, depth + colorized clouds, RGB/depth images (semantic 32SC1 display removed). Startup shows a transient TF error on the clouds; clears after first TF. |
 
-### KEY FILES (TF/Camera)
+### Key files
 
 | File | Purpose |
-|------|---------|
-| `g1_sim/rtx_lidar.py` | `spawn_mid360` — identity default orientation |
-| `g1_sim/g1_robot.py` | Warehouse calls identity orientation |
-| `g1_sim/rtx_camera.py` | `attach_camera_publishers()` — OmniGraph with CameraTF |
-| `assets/g1_29dof_sensors.usd` | USD with baked transforms |
-| `rviz/g1_rtx.rviz` | RViz config (Fixed Frame = World) |
+|---|---|
+| `g1_sim/g1_robot.py` | `load_g1`: Dex3 un-weld, `_align_mid360_mount`, sensors, `/robot_description` |
+| `g1_sim/rtx_lidar.py` | `spawn_mid360`, `ScanPatternCycler`, `pattern_frame_deg` |
+| `g1_sim/rtx_publisher.py` | lidar GMO → PointCloud2 in `mid360_link` (prim pose applied) |
+| `g1_sim/rtx_camera.py` | D435 prim, camera OmniGraph, measured optical TF |
+| `g1_sim/dex3_contacts.py` | fingertip `IsaacContactSensor` + WrenchStamped publisher |
+| `g1_sim/arm_override.py` | `/g1/arm_cmd` and `/g1/hand_cmd` (`DEX3_HAND_JOINTS`) subscribers |
+| `docs/TACSL_PLAN.md` | tactile roadmap (Phase 0 done) |
 
-### IMMEDIATE DEBUG TASKS (TF)
+### Gotchas that cost hours
 
-1. **Check CameraTF node in OmniGraph**
-   - Graph: `/ActionGraph/CameraROS2`
-   - Node: `CameraTF` (ROS2PublishRawTransformTree)
-   - Must have exec from `OnTick.outputs:tick`
-
-2. **Verify camera prim name in USD**
-   ```python
-   from pxr import Usd
-   stage = Usd.Stage.Open('assets/g1_29dof_sensors.usd')
-   for p in stage.Traverse():
-       if 'camera' in p.GetName().lower():
-           print(p.GetPath())
-   ```
-
-3. **Check static TF emission**
-   ```bash
-   ros2 topic echo /tf_static --once | grep -A 10 "d435_camera"
-   ```
-
-4. **Verify depth_pcl frame_id**
-   ```bash
-   ros2 topic echo /g1/camera/depth/points --once | head -5
-   # Should show frame_id: d435_camera
-   ```
-
-### EXPECTED CORRECT STATE
-
-| Frame | World Z | Notes |
-|-------|---------|-------|
-| `mid360_link` | ~1.21 | 0.8 + 0.4188 |
-| `d435_link` | ~1.21 | 0.8 + 0.41987 |
-| `d435_camera` | ~1.21 | Same as d435_link (fixed offset) |
-| `d435_color_optical_frame` | ~1.21 | Same origin, rotated |
+- The committed code used to roll the lidar twice → sensor upright → the old
+  "360° ring" in `screenshots/run1` was the **ceiling**.
+- Legacy scripts still author that double roll (`capture_screenshots.py`,
+  `bake_mid360_into_usd.py`, `test_lidar_prim.py` via `MID360_QUAT_WXYZ`).
+- Dex3 asset disables self-collision: fingertip contacts read 0 unless an
+  external object touches them.
+- Memory: the Dex3 warehouse sim is ~7–8 GB RSS. On 2026-09-23 systemd-oomd
+  killed the whole terminal scope (tmux + agent). A memory-capped systemd
+  unit starved it instead (RTX "Allocation failed" + fd limit 1024). Run in
+  tmux with other heavy apps closed.
 
 ---
 
@@ -316,10 +302,11 @@ nohup ~/venvs/gr00t/bin/python ~/gr00t_ws_server.py \
   --model ~/foundation_models/GR00T-N1.7-3B --port 8765 \
   > ~/gr00t_ws_server.log 2>&1 &
 
-# On laptop: start warehouse sim (with table + steering wheel)
+# On laptop: start warehouse sim (Dex3 G1, table + steering wheel, Mid-360 solid pattern by default)
 cd /home/thakk100/Projects/thesis/G1_sim
-source .envrc
-python scripts/g1_warehouse_sim.py --wbc-mode internal --no-ira --config-dir assets/lidar_configs_rotary
+tmux new-session -d -s g1sim "bash -c 'set -a; source .envrc; set +a; python -u scripts/g1_warehouse_sim.py --headless --wbc-mode internal --no-ira > /tmp/opencode/warehouse.log 2>&1'"
+# RViz (robot_description comes from the sim):
+tmux new-session -d -s g1rviz "bash -c 'source /opt/ros/jazzy/setup.bash; export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=0; rviz2 -d rviz/g1_rtx.rviz --ros-args -p use_sim_time:=true'"
 
 # On laptop (separate terminal): start WebSocket sensor bridge
 cd /home/thakk100/Projects/thesis/G1_sim
@@ -381,51 +368,26 @@ mass=0.5
 
 | Log | Path |
 |-----|------|
-| Sim (main) | `/tmp/opencode/warehouse_gui13.log` |
+| Sim (main) | `/tmp/opencode/warehouse.log` (last verified run: `/tmp/opencode/warehouse_dex3g.log`) |
 | Sim (alt) | `~/warehouse_sim.log` |
 | WS Bridge | `~/ws_bridge_test.log` |
 | GR00T Server | `~/gr00t_ws_server.log` (on spark02) |
 
 ---
 
-## 🔧 QUICK FIXES APPLIED (NOT YET COMMITTED)
-
-```bash
-# Files modified since last commit:
-M  g1_sim/arm_override.py         # spin_once fix (rclpy.spin_once)
-M  g1_sim/rtx_publisher.py        # invert_z param + Z flip
-M  g1_sim/g1_robot.py             # pass invert_z=True to lidar
-M  scripts/g1_warehouse_sim.py    # add_locomanip_props (table + wheel)
-M  scripts/ws_sensor_bridge.py    # import fixes (Node, ARM_CMD_TOPIC)
-M  scripts/gr00t_ws_server.py     # websockets 17.x compat, max_size, server closure
-?? scripts/ws_sensor_bridge.py
-?? scripts/gr00t_ws_server.py
-```
-
----
-
 ## 📋 NEXT STEPS (IN ORDER)
 
-### 1. Fix Camera TF (Workstream A — DO THIS FIRST)
-```bash
-cd /home/thakk100/Projects/thesis/G1_sim
-source .envrc
-# Debug OmniGraph CameraTF node emission
-# Fix rtx_camera.py attach_camera_publishers() to emit static TF
-```
+Workstream B resume order is at the top of this file. Workstream A:
 
-### 2. Commit Foundation Model Setup (Workstream B)
-```bash
-git add g1_sim/arm_override.py g1_sim/rtx_publisher.py g1_sim/g1_robot.py \
-        scripts/g1_warehouse_sim.py scripts/ws_sensor_bridge.py scripts/gr00t_ws_server.py
-git commit -m "feat: GR00T WebSocket bridge + arm override + locomanip props"
-```
-
-### 3. Resume Foundation Model Testing
-- Verify Camera TF fixed → depth points align with lidar
-- Run GR00T bridge with proper RGB (currently frame too large)
-- Test Cosmos3-Edge for video prediction / planning
-- Integrate steering wheel grasp task
+1. **TacSL on Dex3** — follow `docs/TACSL_PLAN.md` (Phase 1 feasibility
+   spike, then elastomer pads, then the Isaac Lab scene decision).
+2. **Hands in the model loop** — route GR00T `left_hand(7)`/`right_hand(7)`
+   and the TriHand teleop retargeter output to `/g1/hand_cmd` (per-hand order
+   thumb 0–2, index 0–1, middle 0–1 already matches).
+3. **Live bridge test** — `sim_ws_bridge.py` `/tf` + `/tf_static` path with
+   the Dex3 sim running (the sim side is verified; the bridge side is not).
+4. **Legacy scripts** — port `capture_screenshots.py`, `bake_mid360_into_usd.py`,
+   `test_lidar_prim.py` to `load_g1` or retire them (double-roll lidar).
 
 ---
 
@@ -434,7 +396,7 @@ git commit -m "feat: GR00T WebSocket bridge + arm override + locomanip props"
 | Layer | Responsibility | Owner |
 |-------|----------------|-------|
 | **WBC (legs/waist)** | Balance, walk, stand | `WbcBridge` (ONNX) — never touches arms |
-| **Arm Override** | Hold, reach, grasp | `ArmTargetSubscriber` → `/g1/arm_cmd` |
+| **Arm / Hand Override** | Hold, reach, grasp | `ArmTargetSubscriber` → `/g1/arm_cmd`, `/g1/hand_cmd` (Dex3) |
 | **Foundation Model** | Predict arm targets | GR00T/Cosmos on spark → WebSocket → `/g1/arm_cmd` |
 | **Sensors** | RGB, depth, lidar, joint_states | Isaac Sim RTX + ROS2 bridge |
 | **Props** | Table, steering wheel | USD references in `add_locomanip_props()` |
@@ -448,9 +410,9 @@ git commit -m "feat: GR00T WebSocket bridge + arm override + locomanip props"
 1. **Spark02 IP**: Use `10.131.37.135` (not 10.131.140.170) — check `hostname -I` on spark02
 2. **GR00T load time**: ~12s on CPU — wait for `[WS] GR00T arm server on ws://0.0.0.0:8765`
 3. **RGB frame size**: 640×480 RGB = ~900KB base64 → need `max_size=10MB` on server
-4. **Camera TF fix**: Once fixed, depth pointcloud will align with lidar in RViz
+4. **Sensor TF**: done — see Workstream A; `docs/history/` keeps the old debugging notes
 5. **Steering wheel**: Dynamic rigid body on kinematic table — ready for GR00T grasp test
 
 ---
 
-**Next agent**: Fix `CameraTF` static TF emission in `g1_sim/rtx_camera.py`. The OmniGraph node exists but doesn't publish to `/tf_static`. Once fixed, resume foundation model testing with aligned sensors.
+**Next agent**: Sensors/TF/Dex3 are verified — start from the checkpoint resume order (Workstream B) or `docs/TACSL_PLAN.md` (tactile). Re-run `scripts/verify_sensor_tf.py` + `scripts/check_sensor_suite.py` after any robot-loading change.
