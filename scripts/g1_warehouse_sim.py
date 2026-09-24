@@ -133,12 +133,12 @@ parser.add_argument(
 parser.add_argument(
     "--config-dir",
     type=str,
-    default="assets/lidar_configs_rotary",
-    help="Mid-360 LiDAR profile dir. Default is the ROTARY matched-envelope "
-    "profile (Livox_Mid360_R, 128 emitters = 32 el ch x 4 groups, -7.2..+52.2 "
-    "deg @10 Hz) - the emitter-state solidState path is dead on this Isaac "
-    "Sim build (see docs/RTX_LIDAR_INIT.md). Pass assets/lidar_configs for "
-    "the exact-pattern solidState configs (non-functional here).",
+    default="assets/lidar_configs_solid",
+    help="Mid-360 LiDAR profile dir. Default is the real non-repetitive "
+    "solid-state pattern (1 emitter state, cycled per scan through "
+    "assets/scan_patterns/mid360.npy - see g1_sim.rtx_lidar.ScanPatternCycler; "
+    "generate with scripts/gen_mid360_solid_config.py). "
+    "assets/lidar_configs_rotary is the repeating 128-channel stand-in.",
 )
 parser.add_argument("--num-prims", type=int, default=0, help="Use only the first N LiDAR sensor prims.")
 parser.add_argument(

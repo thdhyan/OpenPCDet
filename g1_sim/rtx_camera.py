@@ -29,6 +29,10 @@ from __future__ import annotations
 #   +X = forward (away from robot body)
 #   +Z = up in torso frame (camera sits higher on the head)
 # The pitch angle is preserved so the boresight still points ~47.6° downward.
+# DO NOT CHANGE the D435 mount constants, spawn_camera's rotate ops or the
+# OpticalTF values without re-running scripts/verify_sensor_tf.py - verified
+# 2026-09-23 (depth clouds on the floor to <1 cm), frames recorded in
+# docs/tf_snapshot_20260923.yaml.
 D435_URDF_POS = (0.0576235, 0.01753, 0.41987)
 D435_POS = (0.1576235, 0.01753, 0.51987)  # URDF (0.058, 0.018, 0.420) + (0.10, 0.0, 0.10) clearance
 D435_PITCH_RAD = 0.8307767239493009  # ~47.6° downward tilt — unchanged

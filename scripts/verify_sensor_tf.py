@@ -156,7 +156,7 @@ def main() -> None:
     ap.add_argument("--json")
     ap.add_argument(
         "--lidar-offset",
-        default="0,0,-0.03",
+        default="0,0,-0.15",
         help="sensor prim translation in mid360_link (load_g1 lidar_translation); "
         "removed before computing elevation/azimuth",
     )

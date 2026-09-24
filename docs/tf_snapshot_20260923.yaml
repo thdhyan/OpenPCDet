@@ -1,0 +1,134 @@
+captured: 2026-09-23 (sim headless, standing, WBC internal)
+fixed_frame: World
+world:
+  pelvis:
+    xyz:
+    - -0.1868
+    - 0.0073
+    - 0.7402
+    quat_xyzw:
+    - -0.0015
+    - -0.0404
+    - -0.0786
+    - 0.9961
+  torso_link:
+    xyz:
+    - -0.195
+    - 0.0087
+    - 0.7938
+    quat_xyzw:
+    - -0.005
+    - 0.0034
+    - -0.0798
+    - 0.9968
+  mid360_link:
+    xyz:
+    - -0.1915
+    - 0.0126
+    - 1.2125
+    quat_xyzw:
+    - 0.9968
+    - -0.0798
+    - -0.0034
+    - 0.0058
+  d435_link:
+    xyz:
+    - -0.1321
+    - 0.0208
+    - 1.2131
+    quat_xyzw:
+    - 0.0276
+    - 0.4053
+    - -0.075
+    - 0.9107
+  d435_color_optical_frame:
+    xyz:
+    - -0.0326
+    - 0.0058
+    - 1.3125
+    quat_xyzw:
+    - -0.6067
+    - 0.7093
+    - -0.2764
+    - 0.2289
+  imu_in_torso:
+    xyz:
+    - -0.2334
+    - 0.0141
+    - 0.9319
+    quat_xyzw:
+    - -0.005
+    - 0.0034
+    - -0.0798
+    - 0.9968
+  imu_in_pelvis:
+    xyz:
+    - -0.1355
+    - -0.0006
+    - 0.6608
+    quat_xyzw:
+    - -0.0015
+    - -0.0404
+    - -0.0786
+    - 0.9961
+  left_ankle_roll_link:
+    xyz:
+    - -0.0968
+    - 0.1005
+    - 0.0349
+    quat_xyzw:
+    - 0.0005
+    - -0.0001
+    - -0.0489
+    - 0.9988
+  right_ankle_roll_link:
+    xyz:
+    - -0.1728
+    - -0.1079
+    - 0.035
+    quat_xyzw:
+    - 0.0004
+    - 0.0003
+    - -0.1255
+    - 0.9921
+relative:
+  torso_link->mid360_link:
+    xyz:
+    - 0.0003
+    - 0.0
+    - 0.4188
+    quat_xyzw:
+    - 1.0
+    - -0.0
+    - -0.0
+    - 0.0008
+  torso_link->d435_link:
+    xyz:
+    - 0.0576
+    - 0.0175
+    - 0.4199
+    quat_xyzw:
+    - 0.0
+    - 0.4035
+    - -0.0
+    - 0.915
+  d435_link->d435_color_optical_frame:
+    xyz:
+    - -0.0064
+    - 0.0
+    - 0.1413
+    quat_xyzw:
+    - 0.5
+    - -0.5
+    - 0.5
+    - -0.5
+sensor_mounts:
+  mid360_rtx_prim: child of mid360_link, identity orientation, translation (0,0,-0.15)
+    in mid360_link = +15 cm world-up (link is rolled 180 deg)
+  mid360_points_frame: mid360_link (publisher adds the 0.15 m prim offset)
+  mid360_profile: assets/lidar_configs_solid (1 solid-state state, 20k real rays,
+    cycled per scan from assets/scan_patterns/mid360.npy)
+  d435_camera_prim: torso_link + D435_POS (URDF + 10 cm fwd/up clearance), RotateY(-42.4)
+    RotateZ(-90)
+  d435_optical_static_tf: d435_link -> d435_color_optical_frame carries the clearance
+    offset + REP-103 rotation

@@ -299,11 +299,17 @@ def _profile_to_attributes(profile: dict) -> list[tuple[str, str, object]]:
     return out
 
 
+# Identity quaternion: the URDF's mid360_joint already bakes the 180° roll
+# into the USD's mid360_link prim. The sensor prims should mount with
+# identity so their local frame == mid360_link frame (points match TF).
+_IDENTITY_QUAT_WXYZ = (1.0, 0.0, 0.0, 0.0)
+
+
 def spawn_mid360(
     parent_prim_path: str,
     config_dir: Path | str = CONFIG_DIR,
     translation: tuple[float, float, float] = MID360_POS,
-    orientation: tuple[float, float, float, float] = MID360_QUAT_WXYZ,
+    orientation: tuple[float, float, float, float] = _IDENTITY_QUAT_WXYZ,
 ) -> list[str]:
     """Spawn the Mid-360 as several co-located RTX LiDAR prims.
 
@@ -313,8 +319,9 @@ def spawn_mid360(
         config_dir: directory holding the generated profiles (from
             ``scripts/gen_mid360_rtx_config.py``).
         translation: sensor offset from the parent, in metres.
-        orientation: sensor rotation as a wxyz quaternion. The default carries
-            the URDF's 180 deg roll; getting it wrong inverts the cloud.
+        orientation: sensor rotation as a wxyz quaternion, relative to the
+            mount. Identity for mid360_link, which already carries the URDF's
+            180 deg roll.
 
     Returns:
         The spawned prim paths, one per profile.
@@ -387,6 +394,59 @@ def spawn_mid360(
         prim_paths.append(path)
 
     return prim_paths
+
+
+SCAN_PATTERN = REPO / "assets/scan_patterns/mid360.npy"
+POINTS_PER_FRAME = 20000
+
+
+def pattern_frame_deg(frame):
+    """One recorded Mid-360 frame (N x 2 radians: azimuth, elevation) as the
+    (azimuthDeg, elevationDeg) arrays the solid-state emitter state expects.
+
+    Azimuth is negated: the RTX solid-state engine sweeps clockwise, so
+    returns land at -azimuthDeg in the sensor frame (live-measured
+    2026-09-23 with per-sector test patterns).
+    """
+    import numpy as np
+
+    az = np.degrees(frame[:, 0])
+    az = np.where(az > 180.0, az - 360.0, az)
+    return -az, np.degrees(frame[:, 1])
+
+
+class ScanPatternCycler:
+    """Stream consecutive recorded Mid-360 frames into a solid-state prim.
+
+    The RTX solid-state engine only reproduces authored directions with a
+    single emitter state - a 10-state profile squeezed -7..52 deg into
+    -20..10 deg (live-measured 2026-09-23). So the prim carries one state and
+    this rewrites its azimuth/elevation arrays with the next real frame every
+    scan, which keeps the pattern non-repetitive like the device.
+    """
+
+    def __init__(self, prim_path: str, pattern: Path | str = SCAN_PATTERN, scan_rate_hz: float = SCAN_RATE_HZ):
+        import numpy as np
+        import omni.usd
+
+        data = np.load(pattern)
+        n_frames = len(data) // POINTS_PER_FRAME
+        self.frames = data[: n_frames * POINTS_PER_FRAME].reshape(n_frames, POINTS_PER_FRAME, 2)
+        prim = omni.usd.get_context().get_stage().GetPrimAtPath(prim_path)
+        self._az = prim.GetAttribute("omni:sensor:Core:emitterState:s001:azimuthDeg")
+        self._el = prim.GetAttribute("omni:sensor:Core:emitterState:s001:elevationDeg")
+        self.period = 1.0 / scan_rate_hz
+        self.index = 0
+        self._next = -float("inf")
+
+    def step(self, sim_time: float) -> None:
+        if sim_time < self._next:
+            return
+        self._next = sim_time + self.period
+        az, el = pattern_frame_deg(self.frames[self.index])
+        self._az.Set(az.astype("float32").tolist())
+        self._el.Set(el.astype("float32").tolist())
+        self.index = (self.index + 1) % len(self.frames)
 
 
 def attach_ros2_publishers(

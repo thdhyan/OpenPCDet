@@ -133,6 +133,7 @@ class G1Robot:
     ros_graphs: list[str] = field(default_factory=list)
     _lidar_pub: object | None = None
     _rgbd_pub: object | None = None
+    _pattern_cycler: object | None = None
 
     def step(self, current_time: float) -> int:
         """Advance sensor publishing; call once per sim step.
@@ -141,6 +142,8 @@ class G1Robot:
         Safe to call when every sensor is disabled.
         """
         sent = 0
+        if self._pattern_cycler is not None:
+            self._pattern_cycler.step(current_time)
         if self._lidar_pub is not None:
             self._lidar_pub.accumulate()
             sent = self._lidar_pub.publish(current_time) or 0
@@ -182,7 +185,12 @@ def load_g1(
     camera_width: int = 640,
     camera_height: int = 480,
     lidar_config_dir: str | Path | None = None,
-    lidar_translation: tuple[float, float, float] = (0.0, 0.0, -0.03),
+    # DO NOT CHANGE the lidar/camera mount defaults without re-running
+    # scripts/verify_sensor_tf.py - verified 2026-09-23, frames recorded in
+    # docs/tf_snapshot_20260923.yaml. -0.15 in the (180 deg rolled)
+    # mid360_link = +15 cm world-up: lower and the head mesh swallows the
+    # downward rays (-0.03 kept ~5% of them).
+    lidar_translation: tuple[float, float, float] = (0.0, 0.0, -0.15),
     lidar_orientation: tuple[float, float, float, float] | None = None,
     lidar_num_prims: int = 0,         # 0 = all
     lidar_max_points: int = 200_000,
@@ -225,7 +233,7 @@ def load_g1(
         spawn_camera,
         spawn_imu_sensor,
     )
-    from g1_sim.rtx_lidar import MID360_QUAT_WXYZ, spawn_mid360
+    from g1_sim.rtx_lidar import ScanPatternCycler, spawn_mid360
 
     usd_path = Path(usd_path) if usd_path else DEFAULT_USD
     if not usd_path.exists():
@@ -346,13 +354,19 @@ def load_g1(
         prim_paths = spawn_mid360(
             mount,
             translation=lidar_translation,
-            orientation=lidar_orientation if lidar_orientation is not None else MID360_QUAT_WXYZ,
+            # Identity: mid360_link already carries the URDF's 180 deg roll.
+            # A second roll here flips the sensor upright (ceiling cloud).
+            orientation=lidar_orientation if lidar_orientation is not None else (1.0, 0.0, 0.0, 0.0),
             **kwargs,
         )
         if lidar_num_prims and lidar_num_prims < len(prim_paths):
             prim_paths = prim_paths[:lidar_num_prims]
         handle.lidar_prims = prim_paths
-        print(f"[G1] lidar prims     : {len(prim_paths)}  (mount {mount}, dz=+3cm world-up)")
+        print(f"[G1] lidar prims     : {len(prim_paths)}  (mount {mount}, offset {lidar_translation} in mid360_link)")
+        scan_type = stage.GetPrimAtPath(prim_paths[0]).GetAttribute("omni:sensor:Core:scanType").Get()
+        if scan_type == "SOLID_STATE" and len(prim_paths) == 1:
+            handle._pattern_cycler = ScanPatternCycler(prim_paths[0])
+            print(f"[G1] lidar pattern   : {len(handle._pattern_cycler.frames)} recorded Mid-360 frames, 1 per scan")
 
         if ros2:
             # RtxLidarPublisher, NOT the ROS2RtxLidarHelper OmniGraph: the
@@ -369,6 +383,7 @@ def load_g1(
                 topic=lidar_topic,
                 publish_rate=10.0,
                 max_points=lidar_max_points,
+                sensor_offset=lidar_translation,
             )
             print(f"[G1] lidar publisher : rclpy -> {handle._lidar_pub.topics}")
 
