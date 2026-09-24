@@ -74,9 +74,10 @@ launch uses native `/g1/camera/rgb` because the current Isaac Sim image emits
 `rgb8`; the converter remains available for BGR/BGRA/RGBA sources.
 
 The Spark UI is connected through the local `sim-ws` bridge on port `8766`.
-The browser uses the existing port `8080` proxies, forwards RGB/joint
-observations to GR00T N1.7, and requires the explicit **Dispatch selected
-pose** button before `/g1/arm_cmd` is published.
+The browser uses the existing port `8080` proxies, keeps live RGB/joint frames
+for display, and sends one observation to GR00T N1.7 only when **Plan one
+trajectory** is clicked (or Enter is pressed). It requires the explicit
+**Dispatch selected pose** button before `/g1/arm_cmd` is published.
 
 Operational details and validation commands are in
 `docker/ISAAC_ROS_AGENTIC.md`. If Isaac Sim is restarted, recreate
@@ -101,7 +102,7 @@ gotchas: `docs/screenshots/envs_20260924/README.md`.
 | `tabletop_cluster` | 2. + wheel, R/G/B cubes, mug, soup can, mustard bottle, banana, foam brick (all semantically labelled) | ✅ verified: stable 800+ steps, both sensor checks pass, captioned |
 | `nav_people` | 3. IRA warehouse, 6 walkers, navmesh hole at the robot | ✅ verified: robot stands stable pelvis_z ≈ 0.72 m for 400+ updates with IRA humans walking nearby; no fall. Isolating fall cause to floor/box obstacles in env 4. 6 perspective captures saved (isaac_front.png, isaac_side.png, isaac_overview.png, isaac_behind.png, isaac_robot.png, isaac_top.png). |
 | `nav_people_boxes` | 4. + big/small box, navmesh holes so people route around them | ✅ verified standing stable pelvis_z ≈ 0.72–0.73 m for 150+ updates with new box positions (y=3.5 m, y=4.5 m); 6 perspective captures saved. navmesh hole at ∼1.6 m per finding #7 in Plan.md. |
-| `nav_people_forearm_box` | 5. + box welded to both forearms (elbow lower limit raised to the spawn angle) | ⬜ not started; still carries TEMP debug (`_dbg_box_watch`) in `g1_sim/nav_environments.py` to delete after verification. |
+| `nav_people_forearm_box` | 5. + box welded to both forearms (elbow lower limit raised to the spawn angle, elbows bent forward) | ✅ verified standing stable pelvis_z ≈ 0.74 m for 150+ updates with 0.8 kg box welded via FixedJoints to forearms; 4 perspective captures saved. Fixed joints prevent box slip; mass 0.8 kg heavy enough for WBC policy adaptation. `_dbg_box_watch` TEMP debug to delete after verification. |
 
 Rules learned the hard way:
 
@@ -232,7 +233,7 @@ ssh -N -L 8080:127.0.0.1:8080 aim_spark02
 # open http://localhost:8080
 ```
 
-The direct Spark02 URL is `http://10.131.37.135:8080/?demo=1&view=3d-view`.
+The direct Spark02 URL is `http://10.131.37.135:8080/?view=3d-view&v=8`.
 The UI server proxies internally to model `:8765` and simulator bridge `:8766`.
 
 ### Model decision
@@ -326,7 +327,7 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 - Spark02 clone: `~/Projects/fm-debug-ui`; update it after this checkpoint is
   pushed.
 - Verified offline URDF preview URL:
-  `http://10.131.37.135:8080/?demo=1&view=3d-view`
+  `http://10.131.37.135:8080/?view=3d-view&v=8`
 - The Spark02 UI process is running (PID/log in `~/fm-ui.pid` and
   `~/fm-debug-ui.log`) and the browser smoke test passed.
 - The real Isaac Sim ARM64 source now runs locally on Spark02 with cuVSLAM/NVBlox
@@ -339,7 +340,7 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 
 - Spark02 UI is running again at `http://10.131.37.135:8080`; Playwright/Chrome
   smoke check passed. The offline URDF view remains:
-  `http://10.131.37.135:8080/?demo=1&view=3d-view`.
+  `http://10.131.37.135:8080/?view=3d-view&v=8`.
 - Spark02 `~/venvs/gr00t` now has `torch 2.9.0+cu130`,
   `torchvision 0.24.0`, CUDA 13.0, and `torch.cuda.is_available() == True`.
 - The current local Hugging Face credential was forwarded to Spark02 through
@@ -528,7 +529,7 @@ language: annotation.human.task_description
 │  LAPTOP (Isaac Sim)                          SPARK02 (GPU)    │
 │  ┌──────────────────┐      WebSocket (ws://)      ┌──────────┐ │
 │  │ ws_sensor_bridge │◄────────────────────────────►│ gr00t_   │ │
-│  │  (client)        │   JSON frames, ~5 Hz        │ ws_server│ │
+│  │  (client)        │   one obs per Plan click    │ ws_server│ │
 │  └────────┬─────────┘                              └────┬─────┘ │
 │           │                                           │       │
 │  ┌────────▼─────────┐                        ┌────────▼────┐  │
