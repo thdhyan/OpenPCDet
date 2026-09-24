@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Foundation Model Debug UI</title>
+<style>
+  :root {
+    --bg: #0e0e0e; --panel: #181818; --border: #2a2a2a;
+    --text: #e0e0e0; --dim: #888; --accent: #4a9eff; --ok: #4caf50;
+    --warn: #ff9800; --err: #f44336; --purple: #9c27b0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+  .header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .header h1 { font-size: 16px; font-weight: 600; color: var(--accent); }
+  .header .status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.ok { background: var(--ok); } .dot.err { background: var(--err); } .dot.warn { background: var(--warn); }
+  .main { display: grid; grid-template-columns: 280px 1fr 320px; gap: 0; height: calc(100vh - 50px); }
+  .left-panel, .right-panel { background: var(--panel); padding: 16px; overflow-y: auto; border-right: 1px solid var(--border); }
+  .right-panel { border-right: none; border-left: 1px solid var(--border); }
+  .center-panel { padding: 16px; overflow-y: auto; }
+  .section { margin-bottom: 20px; }
+  .section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin-bottom: 10px; }
+  select, input[type="text"], input[type="number"] { width: 100%; padding: 8px 10px; background: #0a0a0a; border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 13px; margin-bottom: 8px; }
+  select:focus, input:focus { outline: none; border-color: var(--accent); }
+  button { padding: 8px 16px; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500; }
+  button:hover { background: #3a8ee6; }
+  button:disabled { background: #444; cursor: not-allowed; }
+  button.danger { background: var(--err); }
+  button.success { background: var(--ok); }
+  .model-card { border: 1px solid var(--border); border-radius: 6px; padding: 12px; margin-bottom: 8px; cursor: pointer; transition: all 0.2s; }
+  .model-card:hover { border-color: var(--accent); }
+  .model-card.active { border-color: var(--accent); background: rgba(74,158,255,0.05); }
+  .model-card h3 { font-size: 14px; margin-bottom: 4px; }
+  .model-card p { font-size: 11px; color: var(--dim); }
+  .model-card .badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px; margin-top: 4px; }
+  .badge.gr00t { background: rgba(156,39,176,0.3); color: #ce93d8; }
+  .badge.cosmos { background: rgba(0,188,212,0.3); color: #4dd0e1; }
+  .badge.qwen { background: rgba(255,152,0,0.3); color: #ffcc80; }
+  .view-tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+  .view-tab { padding: 8px 16px; background: #0a0a0a; border: 1px solid var(--border); color: var(--dim); cursor: pointer; border-radius: 4px 4px 0 0; font-size: 12px; }
+  .view-tab.active { background: var(--panel); color: var(--text); border-bottom-color: var(--panel); }
+  .canvas-container { background: #0a0a0a; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; min-height: 400px; display: flex; align-items: center; justify-content: center; }
+  .canvas-container canvas { max-width: 100%; max-height: 600px; }
+  .log-panel { background: #0a0a0a; border: 1px solid var(--border); border-radius: 4px; padding: 10px; font-family: monospace; font-size: 11px; max-height: 300px; overflow-y: auto; margin-top: 8px; }
+  .log-line { padding: 1px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
+  .log-line .time { color: var(--dim); margin-right: 8px; }
+  .log-line.info { color: #64b5f6; } .log-line.ok { color: #81c784; } .log-line.warn { color: #ffb74d; } .log-line.err { color: #e57373; }
+  .metric { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .metric .label { color: var(--dim); }
+  .metric .value { color: var(--text); font-weight: 500; }
+  .json-view { background: #0a0a0a; border: 1px solid var(--border); border-radius: 4px; padding: 10px; font-family: monospace; font-size: 11px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+  .input-group { margin-bottom: 12px; }
+  .input-group label { display: block; font-size: 11px; color: var(--dim); margin-bottom: 4px; }
+  .schema-preview { background: #0a0a0a; border: 1px solid var(--border); border-radius: 4px; padding: 8px; font-size: 11px; max-height: 200px; overflow-y: auto; }
+  .schema-row { display: flex; justify-content: space-between; padding: 2px 0; }
+  .schema-row .name { color: #90caf9; }
+  .schema-row .type { color: #ce93d8; }
+  .schema-row .shape { color: #a5d6a7; font-size: 10px; }
+  .conn-info { font-size: 11px; color: var(--dim); margin-top: 4px; }
+  .full-width { width: 100%; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>🧠 Foundation Model Debug UI</h1>
+  <span style="font-size:12px;color:var(--dim)">|</span>
+  <span style="font-size:12px" id="conn-label">WebSocket: disconnected</span>
+  <div class="status">
+    <span class="dot err" id="status-dot"></span>
+    <span id="status-text">Disconnected</span>
+  </div>
+</div>
+
+<div class="main">
+  <!-- LEFT PANEL: Model & Config -->
+  <div class="left-panel">
+    <div class="section">
+      <h2>Foundation Model</h2>
+      <div class="model-card active" data-model="gr00t" onclick="selectModel('gr00t')">
+        <h3>GR00T N1.7-3B</h3>
+        <p>VLA policy — action output (joint angles, SE3)</p>
+        <span class="badge gr00t">ACTION POLICY</span>
+      </div>
+      <div class="model-card" data-model="cosmos-edge" onclick="selectModel('cosmos-edge')">
+        <h3>Cosmos3-Edge</h3>
+        <p>World model — next image/video prediction</p>
+        <span class="badge cosmos">VIDEO MODEL</span>
+      </div>
+      <div class="model-card" data-model="cosmos-nano" onclick="selectModel('cosmos-nano')">
+        <h3>Cosmos3-Nano</h3>
+        <p>World model — lightweight video prediction</p>
+        <span class="badge cosmos">VIDEO MODEL</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Output Schema</h2>
+      <select id="output-schema" onchange="updateSchemaPreview()">
+        <option value="action-upper-body">Upper Body Action (arms only)</option>
+        <option value="action-full-body">Full Body Action (all joints)</option>
+        <option value="next-image">Next Image Prediction</option>
+        <option value="next-video">Next Video Prediction</option>
+        <option value="eef-se3">EEF SE(3) Poses</option>
+        <option value="joint-angles">Joint Angle Values</option>
+        <option value="language">Language Output</option>
+      </select>
+      <div class="schema-preview" id="schema-preview"></div>
+    </div>
+
+    <div class="section">
+      <h2>Robot</h2>
+      <select id="robot-select">
+        <option value="g1-29dof">Unitree G1 (29 DOF)</option>
+        <option value="g1-23dof">Unitree G1 (23 DOF)</option>
+        <option value="custom">Custom URDF...</option>
+      </select>
+      <div class="conn-info" id="robot-info">Loading URDF info...</div>
+    </div>
+
+    <div class="section">
+      <h2>Connection</h2>
+      <div class="input-group">
+        <label>WebSocket URL (via proxy)</label>
+        <input type="text" id="ws-url" value="ws://localhost:8080/ws/model?model=gr00t">
+      </div>
+      <div class="input-group">
+        <label>Isaac Sim Bridge (via proxy)</label>
+        <input type="text" id="sim-url" value="ws://localhost:8080/ws/sim?sim_url=ws://localhost:8766">
+      </div>
+      <button class="full-width" onclick="connectAll()" id="connect-btn">Connect</button>
+      <button class="full-width danger" onclick="disconnectAll()" style="margin-top:4px;display:none" id="disconnect-btn">Disconnect</button>
+    </div>
+
+    <div class="section">
+      <h2>Model Config</h2>
+      <div class="input-group">
+        <label>Inference Rate (Hz)</label>
+        <input type="number" id="rate-hz" value="5" min="1" max="30">
+      </div>
+      <div class="input-group">
+        <label>Device</label>
+        <select id="device">
+          <option value="cpu">CPU</option>
+          <option value="cuda">CUDA</option>
+        </select>
+      </div>
+      <div class="input-group">
+        <label>Language Instruction</label>
+        <input type="text" id="lang-cmd" value="pick up the steering wheel">
+      </div>
+    </div>
+  </div>
+
+  <!-- CENTER PANEL: Visualization -->
+  <div class="center-panel">
+    <div class="view-tabs">
+      <div class="view-tab active" onclick="switchView('input')">📥 Input</div>
+      <div class="view-tab" onclick="switchView('output')">📤 Output</div>
+      <div class="view-tab" onclick="switchView('3d-view')">🧊 3D View</div>
+      <div class="view-tab" onclick="switchView('json')">{ } JSON</div>
+      <div class="view-tab" onclick="switchView('logs')">📋 Logs</div>
+    </div>
+
+    <!-- INPUT VIEW -->
+    <div id="view-input" class="view-content">
+      <div class="section">
+        <h2>Camera Feed (RGB + Depth)</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="canvas-container" style="min-height:250px">
+            <canvas id="canvas-rgb" width="320" height="240"></canvas>
+          </div>
+          <div class="canvas-container" style="min-height:250px">
+            <canvas id="canvas-depth" width="320" height="240"></canvas>
+          </div>
+        </div>
+        <div class="log-panel" id="camera-status">Waiting for camera feed...</div>
+      </div>
+      <div class="section">
+        <h2>Joint State</h2>
+        <div class="json-view" id="joint-state-view">Waiting for joint states...</div>
+      </div>
+    </div>
+
+    <!-- OUTPUT VIEW -->
+    <div id="view-output" class="view-content" style="display:none">
+      <div class="section">
+        <h2 id="output-title">Model Output</h2>
+        <div class="canvas-container" style="min-height:350px">
+          <canvas id="canvas-output" width="640" height="480"></canvas>
+        </div>
+      </div>
+      <div class="section">
+        <h2>Action Details</h2>
+        <div class="json-view" id="action-output-view">No output yet...</div>
+      </div>
+    </div>
+
+    <!-- 3D VIEW -->
+    <div id="view-3d-view" class="view-content" style="display:none">
+      <div class="section">
+        <h2>URDF 3D Visualization</h2>
+        <div class="canvas-container" style="min-height:500px;position:relative">
+          <canvas id="canvas-3d" width="800" height="600"></canvas>
+          <div style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.7);padding:4px 8px;border-radius:4px;font-size:11px">
+            <div style="color:#4caf50">● Robot</div>
+            <div style="color:#ff9800">● Target EEF</div>
+            <div style="color:#4a9eff">● Action trajectory</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- JSON VIEW -->
+    <div id="view-json" class="view-content" style="display:none">
+      <div class="section">
+        <h2>Raw JSON Messages</h2>
+        <div class="json-view" id="json-view" style="max-height:600px">Waiting for messages...</div>
+      </div>
+    </div>
+
+    <!-- LOGS VIEW -->
+    <div id="view-logs" class="view-content" style="display:none">
+      <div class="section">
+        <h2>Server & Client Logs</h2>
+        <div class="log-panel" id="logs" style="max-height:600px"></div>
+        <button onclick="clearLogs()" style="margin-top:8px">Clear</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL: Metrics & Details -->
+  <div class="right-panel">
+    <div class="section">
+      <h2>Metrics</h2>
+      <div class="metric"><span class="label">Model</span><span class="value" id="m-model">GR00T N1.7-3B</span></div>
+      <div class="metric"><span class="label">Inference time</span><span class="value" id="m-infer-time">—</span></div>
+      <div class="metric"><span class="label">RTT (round-trip)</span><span class="value" id="m-rtt">—</span></div>
+      <div class="metric"><span class="label">FPS</span><span class="value" id="m-fps">—</span></div>
+      <div class="metric"><span class="label">Actions received</span><span class="value" id="m-actions">0</span></div>
+      <div class="metric"><span class="label">Errors</span><span class="value" id="m-errors">0</span></div>
+    </div>
+
+    <div class="section">
+      <h2>Selected Schema</h2>
+      <div class="schema-preview" id="schema-detail"></div>
+    </div>
+
+    <div class="section">
+      <h2>Model Output History</h2>
+      <div class="log-panel" id="output-history" style="max-height:300px">No outputs yet...</div>
+    </div>
+
+    <div class="section">
+      <h2>Debug</h2>
+      <button class="full-width" onclick="sendTestMessage()" style="margin-bottom:4px">Send Test Message</button>
+      <button class="full-width" onclick="clearAllData()" style="margin-bottom:4px">Clear All Data</button>
+      <button class="full-width success" onclick="exportData()">Export Data (JSON)</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Global state
+  let state = {
+    model: 'gr00t',
+    outputSchema: 'action-upper-body',
+    ws: null,
+    simWs: null,
+    connected: false,
+    simConnected: false,
+    actionCount: 0,
+    errorCount: 0,
+    lastRTT: null,
+    lastInferTime: null,
+    frameCount: 0,
+    startTime: Date.now(),
+    logs: [],
+    lastOutput: null,
+    outputHistory: [],
+    currentTab: 'input'
+  };
+
+  // ===== SCHEMA DEFINITIONS =====
+  const SCHEMAS = {
+    'action-upper-body': {
+      name: 'Upper Body Action',
+      fields: [
+        { name: 'left_arm', type: 'float32[7]', desc: 'Left arm joint angles (rad)' },
+        { name: 'right_arm', type: 'float32[7]', desc: 'Right arm joint angles (rad)' },
+        { name: 'left_hand', type: 'float32[7]', desc: 'Left hand/gripper' },
+        { name: 'right_hand', type: 'float32[7]', desc: 'Right hand/gripper' }
+      ]
+    },
+    'action-full-body': {
+      name: 'Full Body Action',
+      fields: [
+        { name: 'left_arm', type: 'float32[7]', desc: 'Left arm' },
+        { name: 'right_arm', type: 'float32[7]', desc: 'Right arm' },
+        { name: 'left_leg', type: 'float32[6]', desc: 'Left leg' },
+        { name: 'right_leg', type: 'float32[6]', desc: 'Right leg' },
+        { name: 'waist', type: 'float32[3]', desc: 'Waist' },
+        { name: 'base_height', type: 'float32[1]', desc: 'Base height command' },
+        { name: 'navigate', type: 'float32[3]', desc: 'Navigation command' }
+      ]
+    },
+    'next-image': {
+      name: 'Next Image Prediction',
+      fields: [
+        { name: 'image', type: 'uint8[H,W,3]', desc: 'Predicted RGB image' },
+        { name: 'depth', type: 'float32[H,W]', desc: 'Predicted depth' }
+      ]
+    },
+    'next-video': {
+      name: 'Next Video Prediction',
+      fields: [
+        { name: 'frames', type: 'uint8[T,H,W,3]', desc: 'Predicted video frames' },
+        { name: 'fps', type: 'int', desc: 'Frames per second' }
+      ]
+    },
+    'eef-se3': {
+      name: 'EEF SE(3) Poses',
+      fields: [
+        { name: 'left_eef_pos', type: 'float32[3]', desc: 'Position xyz (m)' },
+        { name: 'left_eef_rot', type: 'float32[3x3]', desc: 'Rotation matrix' },
+        { name: 'right_eef_pos', type: 'float32[3]', desc: 'Position xyz (m)' },
+        { name: 'right_eef_rot', type: 'float32[3x3]', desc: 'Rotation matrix' }
+      ]
+    },
+    'joint-angles': {
+      name: 'Joint Angle Values',
+      fields: [
+        ...['left_shoulder_pitch','left_shoulder_roll','left_shoulder_yaw','left_elbow','left_wrist_roll','left_wrist_pitch','left_wrist_yaw'].map(n=>({name:n,type:'float32',desc:'rad'})),
+        ...['right_shoulder_pitch','right_shoulder_roll','right_shoulder_yaw','right_elbow','right_wrist_roll','right_wrist_pitch','right_wrist_yaw'].map(n=>({name:n,type:'float32',desc:'rad'}))
+      ]
+    },
+    'language': {
+      name: 'Language Output',
+      fields: [
+        { name: 'text', type: 'string', desc: 'Generated instruction/description' }
+      ]
+    }
+  };
+
+  // ===== MODEL INFO =====
+  const MODELS = {
+    'gr00t': { name: 'GR00T N1.7-3B', type: 'action', endpoint: 'ws://localhost:8765' },
+    'cosmos-edge': { name: 'Cosmos3-Edge', type: 'video', endpoint: 'ws://localhost:8770' },
+    'cosmos-nano': { name: 'Cosmos3-Nano', type: 'video', endpoint: 'ws://localhost:8771' }
+  };
+
+  // ===== UI FUNCTIONS =====
+  function selectModel(model) {
+    state.model = model;
+    document.querySelectorAll('.model-card').forEach(c => c.classList.remove('active'));
+    document.querySelector(`[data-model="${model}"]`).classList.add('active');
+    document.getElementById('m-model').textContent = MODELS[model].name;
+    // Auto-set output schema based on model type
+    const schemaSelect = document.getElementById('output-schema');
+    if (MODELS[model].type === 'action') {
+      schemaSelect.value = 'action-upper-body';
+    } else {
+      schemaSelect.value = 'next-video';
+    }
+    state.outputSchema = schemaSelect.value;
+    updateSchemaPreview();
+    log(`Model changed to ${MODELS[model].name}`, 'info');
+  }
+
+  function updateSchemaPreview() {
+    state.outputSchema = document.getElementById('output-schema').value;
+    const schema = SCHEMAS[state.outputSchema];
+    const html = schema.fields.map(f =>
+      `<div class="schema-row"><span class="name">${f.name}</span> <span class="type">${f.type}</span></div>`
+    ).join('');
+    document.getElementById('schema-preview').innerHTML = html;
+    document.getElementById('schema-detail').innerHTML = `<div style="font-weight:600;margin-bottom:4px">${schema.name}</div>` + html;
+  }
+
+  function switchView(tab) {
+    state.currentTab = tab;
+    document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.view-content').forEach(v => v.style.display = 'none');
+    document.querySelector(`[onclick="switchView('${tab}')"]`).classList.add('active');
+    document.getElementById(`view-${tab}`).style.display = 'block';
+  }
+
+  // ===== WEBSOCKET =====
+  function connectAll() {
+    const url = document.getElementById('ws-url').value;
+    const simUrl = document.getElementById('sim-url').value;
+    connectWS(url, 'model');
+    connectWS(simUrl, 'sim');
+  }
+
+  function connectWS(url, type) {
+    log(`Connecting to ${url} (${type})...`, 'info');
+    try {
+      const ws = new WebSocket(url);
+      ws.binaryType = 'arraybuffer';
+      if (type === 'model') {
+        state.ws = ws;
+        ws.onopen = () => {
+          state.connected = true;
+          updateStatus();
+          log(`Model WebSocket connected: ${url}`, 'ok');
+          sendConfig();
+        };
+        ws.onclose = (e) => {
+          state.connected = false;
+          updateStatus();
+          log(`Model WebSocket closed (code=${e.code})`, 'warn');
+        };
+        ws.onerror = (e) => log(`Model WebSocket error`, 'err');
+        ws.onmessage = (e) => handleModelMessage(e);
+      } else {
+        state.simWs = ws;
+        ws.onopen = () => {
+          state.simConnected = true;
+          updateStatus();
+          log(`Sim WebSocket connected: ${simUrl}`, 'ok');
+          ws.send(JSON.stringify({type: 'subscribe', topics: ['camera_rgb', 'camera_depth', 'joint_states']}));
+        };
+        ws.onclose = (e) => {
+          state.simConnected = false;
+          updateStatus();
+          log(`Sim WebSocket closed (code=${e.code})`, 'warn');
+        };
+        ws.onerror = (e) => log(`Sim WebSocket error`, 'err');
+        ws.onmessage = (e) => handleSimMessage(e);
+      }
+    } catch (e) {
+      log(`Connection failed: ${e.message}`, 'err');
+    }
+  }
+
+  function disconnectAll() {
+    if (state.ws) state.ws.close();
+    if (state.simWs) state.simWs.close();
+    state.connected = false;
+    state.simConnected = false;
+    updateStatus();
+  }
+
+  function sendConfig() {
+    if (!state.ws || state.ws.readyState !== 1) return;
+    state.ws.send(JSON.stringify({
+      type: 'config',
+      model: state.model,
+      output_schema: state.outputSchema,
+      rate_hz: parseInt(document.getElementById('rate-hz').value),
+      device: document.getElementById('device').value,
+      language: document.getElementById('lang-cmd').value
+    }));
+  }
+
+  // ===== MESSAGE HANDLERS =====
+  function handleModelMessage(e) {
+    try {
+      const msg = JSON.parse(e.data);
+      state.actionCount++;
+      document.getElementById('m-actions').textContent = state.actionCount;
+      state.lastOutput = msg;
+
+      // Update metrics
+      if (msg.rtt_ms) {
+        state.lastRTT = msg.rtt_ms;
+        document.getElementById('m-rtt').textContent = `${msg.rtt_ms.toFixed(0)}ms`;
+      }
+      if (msg.infer_ms) {
+        state.lastInferTime = msg.infer_ms;
+        document.getElementById('m-infer-time').textContent = `${msg.infer_ms.toFixed(0)}ms`;
+      }
+
+      // Show output
+      document.getElementById('action-output-view').textContent = JSON.stringify(msg, null, 2);
+      document.getElementById('json-view').textContent = JSON.stringify(msg, null, 2);
+
+      // Add to history
+      state.outputHistory.unshift({t: Date.now(), model: state.model, schema: state.outputSchema, data: msg});
+      if (state.outputHistory.length > 50) state.outputHistory.pop();
+      updateOutputHistory();
+
+      // Visualize based on schema
+      visualizeOutput(msg);
+    } catch (e) {
+      state.errorCount++;
+      document.getElementById('m-errors').textContent = state.errorCount;
+    }
+  }
+
+  function handleSimMessage(e) {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.rgb || msg.depth) drawCamera(msg);
+      if (msg.type === 'joint_states' || msg.joint_states) {
+        document.getElementById('joint-state-view').textContent = JSON.stringify(msg.joint_states || msg, null, 2);
+      }
+    } catch (e) {}
+  }
+
+  // ===== VISUALIZATION =====
+  function drawCamera(msg) {
+    if (msg.rgb) {
+      const canvas = document.getElementById('canvas-rgb');
+      const ctx = canvas.getContext('2d');
+      const img = new Image();
+      img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      img.src = 'data:image/jpeg;base64,' + msg.rgb;
+    }
+    if (msg.depth) {
+      const canvas = document.getElementById('canvas-depth');
+      const ctx = canvas.getContext('2d');
+      const img = new Image();
+      img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      img.src = 'data:image/jpeg;base64,' + msg.depth;
+    }
+    document.getElementById('camera-status').textContent = `Last frame: ${new Date(msg.t*1000).toLocaleTimeString()} | Resolution: ${msg.width||'?'}x${msg.height||'?'}`;
+  }
+
+  function visualizeOutput(msg) {
+    if (state.currentTab === 'output' || state.currentTab === '3d-view') {
+      const canvas = document.getElementById('canvas-output');
+      const ctx = canvas.getContext('2d');
+      // Simple placeholder — will be replaced with 3D view
+      ctx.fillStyle = '#0a0a0a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#4a9eff';
+      ctx.font = '14px monospace';
+      ctx.fillText(`Output: ${state.outputSchema}`, 20, 30);
+      ctx.fillText(`Actions: ${state.actionCount}`, 20, 50);
+    }
+  }
+
+  // ===== 3D VIEW =====
+  function init3DView() {
+    const canvas = document.getElementById('canvas-3d');
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#4caf50';
+    ctx.font = '12px monospace';
+    ctx.fillText('3D URDF visualization (Three.js integration pending)', 20, 30);
+  }
+
+  // ===== UTILITIES =====
+  function updateStatus() {
+    const dot = document.getElementById('status-dot');
+    const text = document.getElementById('status-text');
+    const conn = document.getElementById('conn-label');
+    if (state.connected && state.simConnected) {
+      dot.className = 'dot ok';
+      text.textContent = 'Connected';
+      conn.textContent = 'WebSocket: connected ✓';
+    } else if (state.connected || state.simConnected) {
+      dot.className = 'dot warn';
+      text.textContent = 'Partial';
+      conn.textContent = 'WebSocket: partial';
+    } else {
+      dot.className = 'dot err';
+      text.textContent = 'Disconnected';
+      conn.textContent = 'WebSocket: disconnected';
+    }
+    document.getElementById('connect-btn').style.display = state.connected ? 'none' : '';
+    document.getElementById('disconnect-btn').style.display = state.connected || state.simConnected ? '' : 'none';
+  }
+
+  function log(msg, level='info') {
+    const t = new Date().toLocaleTimeString();
+    state.logs.push({t, msg, level});
+    if (state.logs.length > 200) state.logs.shift();
+    const el = document.getElementById('logs');
+    el.innerHTML = state.logs.map(l =>
+      `<div class="log-line ${l.level}"><span class="time">${l.t}</span>${l.msg}</div>`
+    ).join('');
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function clearLogs() {
+    state.logs = [];
+    document.getElementById('logs').innerHTML = '';
+  }
+
+  function clearAllData() {
+    state.actionCount = 0;
+    state.errorCount = 0;
+    state.outputHistory = [];
+    document.getElementById('m-actions').textContent = '0';
+    document.getElementById('m-errors').textContent = '0';
+    document.getElementById('output-history').textContent = 'No outputs yet...';
+    log('All data cleared', 'info');
+  }
+
+  function updateOutputHistory() {
+    const el = document.getElementById('output-history');
+    el.innerHTML = state.outputHistory.slice(0, 20).map(o => {
+      const t = new Date(o.t).toLocaleTimeString();
+      return `<div class="log-line"><span class="time">${t}</span>${o.model}: ${o.schema} (${Object.keys(o.data).length} fields)</div>`;
+    }).join('');
+  }
+
+  function exportData() {
+    const data = {
+      model: state.model,
+      schema: state.outputSchema,
+      exported_at: new Date().toISOString(),
+      action_count: state.actionCount,
+      history: state.outputHistory
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `fm_debug_${Date.now()}.json`;
+    a.click();
+    log('Data exported', 'ok');
+  }
+
+  function sendTestMessage() {
+    if (!state.ws || state.ws.readyState !== 1) {
+      log('Not connected — cannot send test', 'warn');
+      return;
+    }
+    state.ws.send(JSON.stringify({
+      type: 'test',
+      t: Date.now()/1000,
+      message: 'test message from UI'
+    }));
+    log('Test message sent', 'info');
+  }
+
+  // ===== INIT =====
+  document.addEventListener('DOMContentLoaded', () => {
+    updateSchemaPreview();
+    updateStatus();
+    init3DView();
+    log('Foundation Model Debug UI initialized', 'info');
+
+    // Load robot info
+    fetch('/api/robot/g1-29dof')
+      .then(r => r.json())
+      .then(d => {
+        document.getElementById('robot-info').textContent = `${d.name} | ${d.num_joints} joints | ${d.total_dof} DOF`;
+      })
+      .catch(() => {
+        document.getElementById('robot-info').textContent = 'URDF info unavailable';
+      });
+  });
+
+  // FPS counter
+  setInterval(() => {
+    const elapsed = (Date.now() - state.startTime) / 1000;
+    const fps = state.actionCount / elapsed;
+    document.getElementById('m-fps').textContent = fps.toFixed(1);
+  }, 1000);
+</script>
+</body>
+</html>
