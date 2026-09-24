@@ -66,6 +66,8 @@ MODELS = {
         "ws_url": "ws://localhost:8767",
         "description": "Unitree G1 policy — EEF pose and base action chunks",
         "schemas": ["eef-se3", "action-upper-body"],
+        "state_dim": 23,
+        "requires_ik": True,
     },
 }
 
