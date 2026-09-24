@@ -18,7 +18,7 @@ A single WebSocket connection is used bidirectionally. Laptop = client
 plain ws:// server on a known port).
 
 Frame format (JSON text frames):
-    {"type":"obs", "t":123.4, "rgb":"base64-jpeg", "joints":{"n":[...],"p":[...]}, "cmd":"hold a box"}
+    {"type":"obs", "t":123.4, "rgb":"base64-jpeg", "joints":{"name":[...],"position":[...]}, "state":[23 EEF values], "cmd":"hold a box"}
     {"type":"arm_cmd", "t":123.5, "name":[...], "position":[...]}
     {"type":"ping", "t":123.6}
     {"type":"cmd", "text":"pick up the box"}   # spark -> laptop: text trigger
@@ -50,8 +50,11 @@ from g1_sim.arm_override import ARM_CMD_TOPIC
 class WsBridgeNode(Node):
     """ROS2 side: subscribes to sensors, publishes arm commands."""
 
-    def __init__(self, arm_topic: str = ARM_CMD_TOPIC):
+    def __init__(self, arm_topic: str = ARM_CMD_TOPIC, eef_state: list[float] | None = None):
         super().__init__("g1_ws_bridge")
+        if eef_state is not None and len(eef_state) != 23:
+            raise ValueError("--eef-state must contain exactly 23 values")
+        self.eef_state = list(eef_state) if eef_state is not None else None
         self._last_rgb: Image | None = None
         self._last_joints: JointState | None = None
         self._last_tf: TFMessage | None = None
@@ -69,8 +72,10 @@ class WsBridgeNode(Node):
         qos_pub = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST, depth=5,
                              reliability=QoSReliabilityPolicy.BEST_EFFORT)
         self._arm_pub = self.create_publisher(JointState, arm_topic, qos_pub)
-        self.get_logger().info(f"ws_bridge: subscribing /g1/camera/rgb, /g1/joint_states; "
-                               f"publishing arm cmds on {arm_topic}")
+        self.get_logger().info(
+            f"ws_bridge: subscribing /g1/camera/rgb, /g1/joint_states, /tf; "
+            f"publishing arm cmds on {arm_topic}"
+        )
 
     def _on_rgb(self, msg: Image) -> None:
         self._last_rgb = msg
@@ -103,6 +108,9 @@ class WsBridgeNode(Node):
         jdict = None
         if j is not None:
             jdict = {"name": list(j.name), "position": list(j.position)}
+        if self.eef_state is not None:
+            jdict = jdict or {"name": [], "position": []}
+            jdict["state"] = self.eef_state
         if self._last_tf is not None:
             jdict = jdict or {"name": [], "position": []}
             jdict["tf"] = [
@@ -206,10 +214,23 @@ def main():
                     help="publish observations Hz")
     ap.add_argument("--send-to-sim", action="store_true",
                     help="publish model arm targets to /g1/arm_cmd; default is preview-only")
+    ap.add_argument(
+        "--eef-state",
+        default=None,
+        help="optional comma-separated UnifoLM state[23]; supplied by an FK/TF producer, not derived here",
+    )
     args = ap.parse_args()
+    eef_state = None
+    if args.eef_state:
+        try:
+            eef_state = [float(value) for value in args.eef_state.split(",")]
+        except ValueError as exc:
+            ap.error(f"invalid --eef-state: {exc}")
+        if len(eef_state) != 23:
+            ap.error("--eef-state must contain exactly 23 comma-separated values")
 
     rclpy.init()
-    bridge = WsBridgeNode()
+    bridge = WsBridgeNode(eef_state=eef_state)
     try:
         asyncio.run(ws_client(bridge, args.host, args.port,
                               args.text_cmd, args.rate, args.send_to_sim))
