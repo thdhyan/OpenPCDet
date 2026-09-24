@@ -1,9 +1,8 @@
-# Custom Isaac Sim + Isaac ROS image (CUVSLAM + NVBLOX)
+# Custom Isaac Sim + Isaac ROS image (CuVSLAM + NVBlox)
 # Extends nvcr.io/nvidia/isaac-lab:3.0.0-beta2-post1
 #
-# Isaac Sim ships CUDA 12.8, but Isaac ROS release-4.6 needs CUDA 13 NPP.
-# We install the real libnpp-13-0 from NVIDIA's CUDA repo and let the
-# cu13 Python package provide libnvJitLink.so.13.
+# Isaac ROS 4.5 is used for the current dl driver line (CUDA 13.0 / 580+).
+# Override ISAAC_ROS_RELEASE only after checking the host driver requirements.
 #
 # Build:
 #   docker compose build
@@ -11,6 +10,7 @@
 FROM nvcr.io/nvidia/isaac-lab:3.0.0-beta2-post1
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG ISAAC_ROS_RELEASE=4.5
 
 USER root
 
@@ -29,9 +29,10 @@ RUN apt-get update && apt-get install -y curl gnupg && \
     rm -rf /var/lib/apt/lists/*
 
 # ── 1. Add NVIDIA CUDA repo + install CUDA 13 NPP runtime ────────────────────
-# Isaac ROS NVBLOX needs libnppidei.so.13, libnppim.so.13, libnppitc.so.13,
-# libnppc.so.13. These are only in the real CUDA 13 NPP package.
-# We also install cuda-cudart-13-0 (pulled as dep) which provides libcudart.so.13.
+# Isaac ROS 4.5 targets CUDA 13.0. Pin the apt solver so a fresh CUDA repo
+# cannot silently pull 13.1+ packages that require a newer host driver.
+COPY docker/isaac_ros_cuda_13_0.pref /etc/apt/preferences.d/isaac-ros-cuda-13-0.pref
+# Isaac ROS NVBLOX needs the real CUDA 13 NPP libraries.
 # Repo path is arch-specific: sbsa = ARM64 (Sparks), x86_64 = amd64.
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "arm64" ]; then CUDA_ARCH="sbsa"; else CUDA_ARCH="x86_64"; fi && \
@@ -63,7 +64,7 @@ RUN mkdir -p /usr/share/keyrings /etc/apt/keyrings && \
     rm /tmp/isaac-ros.key && \
     ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "arm64" ]; then CODENAME="noble-fastos"; else CODENAME="noble"; fi && \
-    echo "deb [signed-by=/usr/share/keyrings/nvidia-isaac-ros.gpg] https://isaac.download.nvidia.com/isaac-ros/release-4.6 $CODENAME main" \
+    echo "deb [signed-by=/usr/share/keyrings/nvidia-isaac-ros.gpg] https://isaac.download.nvidia.com/isaac-ros/release-${ISAAC_ROS_RELEASE} $CODENAME main" \
       > /etc/apt/sources.list.d/nvidia-isaac-ros.list && \
     apt-get update
 

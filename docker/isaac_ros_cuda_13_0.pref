@@ -1,0 +1,10 @@
+# NVIDIA Isaac ROS CUDA 13.0 pin for dl (driver 590 / CUDA 13.1).
+# Prevent apt from selecting CUDA 13.1+ packages that require a newer driver.
+Package: cuda-*-13-[1-9]* libnv*-13-[1-9]*
+Pin: version *
+Pin-Priority: -1
+
+# Prefer the CUDA 13.0 package variants.
+Package: cuda-* libnv*
+Pin: version 13.0.*
+Pin-Priority: 1001

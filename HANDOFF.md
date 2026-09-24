@@ -162,19 +162,23 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 
 ### Isaac ROS / AgenticROS setup
 
-- Isaac ROS **4.6** is the compatibility target for this stack: Isaac Sim 6.0.x
-  and ROS 2 Jazzy. Isaac ROS 5.0 is not used yet because it requires driver
-  595+/CUDA 13.2+ while `dl` currently reports driver 590.48.01/CUDA 13.1.
+- Isaac ROS **4.5** is the current build target for `dl`: ROS 2 Jazzy and CUDA
+  13.0. Isaac ROS 4.6/5.0 currently pull newer CUDA dependencies; 5.0 requires
+  driver 595+, while `dl` reports driver 590.48.01/CUDA 13.1. Isaac Sim 6.0 ↔
+  Isaac ROS 4.5 still needs a runtime compatibility gate.
 - `docker/docker-compose-isaac-ros.yml` adds opt-in `sim`, `perception`, and
   `agent` profiles. The current G1 RGBD camera is sufficient for CuVSLAM RGBD
   mode; NVBlox uses the existing depth/RGB/TF stream. LiDAR fusion remains off
   until the four per-beam Mid-360 topics are merged.
 - `docker/agenticros/` provides a minimal rosbridge sidecar and an AgenticROS
   MCP image/config. It connects to the existing Isaac Sim graph through
-  `ws://127.0.0.1:9090`; it does not start Gazebo or a second simulator.
+  `ws://127.0.0.1:9091`; it does not start Gazebo or a second simulator. Port
+  9090 is already occupied by a cockpit service on `dl`.
 - GPU services have not been started because all four `dl` GPUs are currently
   occupied by unrelated workloads. Run the CPU-only rosbridge profile now;
-  start `sim`/`perception` only after selecting a free GPU.
+  start `sim`/`perception` only after selecting a free GPU. The first Isaac ROS
+  image build was stopped after apt resolved CUDA 13.2 packages under the old
+  4.6 configuration; the Dockerfile is now pinned to release 4.5/CUDA 13.0.
 
 ---
 

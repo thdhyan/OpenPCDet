@@ -3,7 +3,7 @@
     "mode": "rosbridge"
   },
   "rosbridge": {
-    "url": "ws://127.0.0.1:9090",
+    "url": "ws://127.0.0.1:9091",
     "reconnect": true,
     "reconnectInterval": 3000
   },

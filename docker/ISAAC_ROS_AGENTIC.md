@@ -4,16 +4,20 @@
 
 Run this stack on **`dl` (x86_64)**, not on Spark02:
 
-- Isaac Sim 6.0.x and Isaac ROS **4.6** use ROS 2 Jazzy.
-- Isaac ROS 5.0 currently requires Ubuntu 24.04, CUDA 13.2+, and driver 595+.
-- `dl` currently reports Ubuntu 22.04, driver `590.48.01`, and CUDA `13.1`.
-  Isaac ROS 5.0 is therefore not an official match for this host.
-- Isaac ROS 4.6 is the compatible line for the existing Isaac Sim 6 setup and
-  supports CuVSLAM on x86. cuVSLAM is explicitly not supported on DGX Spark.
+- Isaac ROS **4.5** is the current build target because it uses ROS 2 Jazzy and
+  CUDA 13.0 (driver 580+), which is a valid fit for the `dl` driver line.
+- Isaac ROS 4.6/5.0 packages currently resolve to CUDA 13.1+/13.2+ runtime
+  dependencies. `dl` reports driver `590.48.01` and CUDA `13.1`; Isaac ROS 5.0
+  requires driver 595+ and is therefore not an official match for this host.
+- Isaac ROS 4.5 was not the release line officially validated with Isaac Sim
+  6.0, so the Isaac Sim 6.0 ↔ 4.5 pairing remains a runtime compatibility
+  gate. Do not upgrade to 4.6/5.0 merely to match Isaac Sim 6.0 without first
+  updating the host driver and re-running the checks below.
+- cuVSLAM is supported on x86; it is explicitly not supported on DGX Spark.
 
 The existing `docker/Dockerfile` builds the Isaac Sim 6 image with the Isaac
-ROS 4.6 `visual_slam` and `nvblox` packages. Do not replace it with the Spark
-or Isaac ROS 5 container.
+ROS 4.5 `visual_slam` and `nvblox` packages and pins apt to CUDA 13.0. Do not
+replace it with the Spark or Isaac ROS 5 container.
 
 ## Topic contract
 
@@ -59,15 +63,15 @@ docker compose -f docker/docker-compose-isaac-ros.yml \
 ```
 
 The AgenticROS container is configured for the G1 graph through
-`ws://127.0.0.1:9090`; its config is in
-`docker/agenticros/agenticros-config.json`. It uses rosbridge, not Gazebo, so
-there is only one simulation source: Isaac Sim.
+`ws://127.0.0.1:9091` (port 9090 is already used by another cockpit service
+on `dl`); its config is in `docker/agenticros/agenticros-config.json`. It uses
+rosbridge, not Gazebo, so there is only one simulation source: Isaac Sim.
 
 ## Validation
 
 ```bash
 docker compose -f docker/docker-compose-isaac-ros.yml ps
-curl http://127.0.0.1:9090
+curl http://127.0.0.1:9091
 # inside the Isaac ROS perception container:
 source /opt/ros/jazzy/setup.bash
 ros2 topic list | grep -E 'camera|visual_slam|nvblox|imu|tf'
