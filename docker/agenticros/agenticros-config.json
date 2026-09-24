@@ -29,7 +29,7 @@
   ],
   "teleop": {
     "cameraTopic": "/g1/camera/rgb",
-    "cmdVelTopic": "/g1/cmd_vel",
-    "speedDefault": 0.2
+    "cmdVelTopic": "",
+    "speedDefault": 0.0
   }
 }
