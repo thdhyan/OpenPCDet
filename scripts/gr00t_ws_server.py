@@ -105,7 +105,7 @@ def _build_observation(mc, rgb_np: np.ndarray | None, joint_names: list[str],
     # identity (1,0,0,0,1,0) which is a valid near-rest pose.
     def _eef_9d(arm7: np.ndarray) -> np.ndarray:
         # pos: forward of hand ~ proportional to elbow bend (coarse); rot6d identity.
-        return np.array([0.0, 0.0, 0.25, 1.0, 0.0, 0.0, 0.1, 0.0, 0.0], dtype=np.float32)
+        return np.array([0.0, 0.0, 0.25, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0], dtype=np.float32)
     left_eef = _eef_9d(arm_l)
     right_eef = _eef_9d(arm_r)
 

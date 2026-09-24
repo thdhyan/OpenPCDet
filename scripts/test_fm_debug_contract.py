@@ -38,6 +38,7 @@ def main() -> None:
     joint_names = ARM_JOINTS + DEX3_HAND_JOINTS
     joint_positions = [0.0] * len(ARM_JOINTS) + [0.1] * len(DEX3_HAND_JOINTS)
     observation = _build_observation(modality, None, joint_names, joint_positions)
+    assert np.allclose(observation["state"]["left_wrist_eef_9d"][0, 0, 3:].reshape(2, 3), np.eye(3)[:2])
     assert np.allclose(observation["state"]["left_hand"], 0.1)
     assert np.allclose(observation["state"]["right_hand"], 0.1)
     server = Gr00tArmServer("unused", "cpu")
