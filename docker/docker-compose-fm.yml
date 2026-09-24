@@ -85,5 +85,12 @@ services:
     restart: unless-stopped
 
 # ── Model servers (run on spark02, not in this compose) ──────────────────────
-# GR00T:  ssh aim_spark02; nohup ~/venvs/gr00t/bin/python ~/gr00t_ws_server.py --port 8765 &
+# GR00T N1.7: ssh aim_spark02; nohup ~/venvs/gr00t/bin/python \
+#   ~/Projects/fm-debug-ui/scripts/gr00t_ws_server.py --port 8765 \
+#   --model ~/foundation_models/GR00T-N1.7-3B --device cuda > ~/gr00t_ws.log 2>&1 &
+# UnifoLM-VLA (lazy, EEF23 preview only):
+#   PYTHONPATH=~/UnifoLM-VLA/src nohup ~/venvs/gr00t/bin/python \
+#   ~/Projects/fm-debug-ui/scripts/unifolm_ws_server.py --port 8767 \
+#   --ckpt ~/foundation_models/UnifoLM-VLA-Base/checkpoints/pytorch_model.pt \
+#   --vlm ~/foundation_models/UnifoLM-VLM-Base > ~/unifolm_ws.log 2>&1 &
 # Cosmos: ssh aim_spark02; python cosmos_ws_server.py --port 8770 &

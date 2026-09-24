@@ -511,7 +511,19 @@
       // Show output
       document.getElementById('action-output-view').textContent = JSON.stringify(msg, null, 2);
       document.getElementById('json-view').textContent = JSON.stringify(msg, null, 2);
-      if (Array.isArray(msg.trajectory) && msg.trajectory.length) {
+      if (msg.action_space === 'eef23') {
+        // UnifoLM emits 23-D EEF/base actions.  The current URDF preview and
+        // /g1/arm_cmd dispatch path are joint-space only, so keep this output
+        // visible but do not present it as an executable joint trajectory.
+        state.trajectory = [];
+        window.dispatchEvent(new CustomEvent('fm:trajectory', {detail: {trajectory: [], names: []}}));
+        document.getElementById('preview-empty').textContent = 'EEF trajectory received; EEF-to-IK preview is not enabled.';
+        document.getElementById('preview-empty').style.display = 'block';
+        document.getElementById('preview-panel').classList.remove('preview-ready');
+        document.getElementById('preview-play').disabled = true;
+        document.getElementById('preview-send').disabled = true;
+        log('UnifoLM EEF output is preview-only until an explicit EEF-to-IK stage is added', 'warn');
+      } else if (Array.isArray(msg.trajectory) && msg.trajectory.length) {
         setPreviewTrajectory(msg);
       }
 

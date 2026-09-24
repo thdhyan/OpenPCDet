@@ -125,6 +125,13 @@ The model selector includes:
 UnifoLM and Cosmos services are lazy/optional: selecting a model does not load
 weights until that model's inference service receives a request.
 
+The optional UnifoLM adapter is `scripts/unifolm_ws_server.py`. The published
+Unitree checkpoint expects a 23-D EEF/base state and returns a 23-D EEF action
+chunk; it does not treat 43 G1 joint angles as that state. The adapter accepts
+`state`/`eef_state[23]`, returns `action_space: "eef23"`, and refuses joint-only
+input rather than inventing an IK conversion. EEF output is displayed but
+cannot enter the current joint-space `/g1/arm_cmd` preview.
+
 The server also exposes `GET /api/models`, `GET /api/schema`,
 `GET /api/robot/g1-29dof`, `GET /assets/g1_29dof.urdf`, and `POST /api/ik`.
 

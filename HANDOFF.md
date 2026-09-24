@@ -1,7 +1,7 @@
 # HANDOFF — G1 Foundation Model Testing + TF/Camera/Lidar Alignment
 
-**Status**: CHECKPOINT — Workstream A (sensors/TF/Dex3) DONE and verified in sim (`9a40ebb`); UI server verified on Spark02; GR00T N1.7 access test running; full Docker stack pending
-**Last Updated**: 2026-09-23
+**Status**: CHECKPOINT — Workstream A (sensors/TF/Dex3) DONE and verified in sim (`9a40ebb`); UI server verified on Spark02; Spark02 GPU dependency repair and UnifoLM VLM download in progress; full Docker stack pending
+**Last Updated**: 2026-09-24
 **Repo**: `/home/thakk100/Projects/thesis/G1_sim`
 
 ---
@@ -35,14 +35,17 @@ The UI server proxies internally to model `:8765` and simulator bridge `:8766`.
    - `GR00T-N1.7-3B` hard-codes `nvidia/Cosmos-Reason2-2B` as its VLM backbone.
    - That repository is gated; the local Hugging Face token was forwarded to
      Spark02 through SSH stdin and authenticated as `Thakk100`.
-   - A GPU load verification is running. Do not substitute Cosmos3-Edge/Nano or
-     silently switch to N1.5 if the load fails.
+   - A prior GPU load command was interrupted when the server restarted; no
+     GR00T process is active now. The Spark02 venv is being aligned to the
+     checkpoint's Torch 2.9/CUDA 13 stack before a fresh load test.
 
 2. **UnifoLM-VLA is the secondary action model.**
-   - The Unitree checkpoint download is running on Spark02 at
+   - The Unitree action checkpoint is present on Spark02 at
      `~/foundation_models/UnifoLM-VLA-Base` (about 19 GB).
-   - Its WebSocket adapter and full dependency validation are still pending.
-   - Keep Cosmos models optional and unloaded by default.
+   - The required `UnifoLM-VLM-Base` download is in progress.
+   - `scripts/unifolm_ws_server.py` is now a lazy EEF23 WebSocket adapter; it
+     refuses joint-only input and never dispatches EEF actions as joints.
+   - Full dependency/model-load validation is still pending.
 
 3. **The old N1.5 locomanipulation checkout is historical fallback material only.**
    - Do not use it as the default or claim it is a drop-in N1.7 replacement.
@@ -121,12 +124,15 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
 - The current local Hugging Face credential was forwarded to Spark02 through
   SSH stdin only; `hf auth whoami` returned `Thakk100`. The token is not stored
   in the repository, Docker files, or command arguments.
-- GR00T N1.7 load verification was started with the forwarded token and the
-  GPU venv. Check its process/log before relying on inference; do not start a
-  second copy while it is running.
-- UnifoLM-VLA-Base download was started on Spark02 at
-  `~/foundation_models/UnifoLM-VLA-Base` (approximately 19 GB). Its code/adapter
-  is not yet wired into the UI service.
+- The prior GR00T N1.7 load command was interrupted by the server restart; no
+  GR00T process is active. Spark02 is being realigned to Torch 2.9.0+cu130 /
+  torchvision 0.24.0 / Triton 3.5, which matches the GR00T package and its
+  aarch64 wheels. Do not claim a successful model load yet.
+- The UnifoLM-VLA action checkpoint is present on Spark02; its 16+ GB
+  `UnifoLM-VLM-Base` companion download is still running.
+- `scripts/unifolm_ws_server.py` now provides a lazy, unloadable EEF23 adapter.
+  It requires an explicit 23-D EEF/base state and intentionally does not guess
+  EEF poses from joint angles.
 - The Dex3-capable robot USD and contact/TF changes are staged for this
   checkpoint. `g1_robot.py` now defaults to
   `assets/robot/g1_29_dex3/g1_29dof_with_dex3_base_fix.usd`, publishes 43
@@ -135,9 +141,9 @@ Do not overwrite or regenerate the warehouse USD/USDA until the scene has been v
   panel that marks Dex3 frames. This still needs a live ROS 2 run test.
 - The model selector now includes UnifoLM-VLA, but no UnifoLM inference process
   is active yet. GR00T remains the only implemented model server.
-- Model loading is lazy for GR00T (weights load on first inference), but a
-  multi-process hot-unload manager is not implemented yet. Do not claim all
-  models are hot-loadable until the manager exists.
+- Model loading is lazy for GR00T and UnifoLM's adapter. The UnifoLM process
+  accepts explicit `load`/`unload` messages, but a cross-model supervisor and
+  automatic idle eviction are still pending.
 
 The older sections below preserve prior experiments; where they conflict with
 this checkpoint, use the checkpoint and resume order above.
@@ -146,14 +152,19 @@ this checkpoint, use the checkpoint and resume order above.
 
 ### Resume order
 
-0. Check the one running Spark02 GR00T load test and the UnifoLM download; do not duplicate either.
-1. Fix `/tf` and `/tf_static` streaming in `scripts/sim_ws_bridge.py`.
-2. Add TF data to the UI input panel.
-3. Write the UnifoLM-VLA WebSocket adapter using the Spark02 checkpoint.
-4. Add a multi-process model manager with explicit load/unload and idle eviction.
-5. Add `gr00t` and `unifolm` services to the Docker Compose stack.
-6. Start Isaac Sim + bridge + GR00T/UnifoLM + UI only after the GPU/container environment is verified.
-7. Keep WBC on legs/waist and route only the selected arm/hand trajectory after explicit preview approval.
+0. Let the Spark02 Torch repair and UnifoLM-VLM download finish; do not launch
+   duplicate installs or model processes.
+1. Verify `torch.cuda.is_available()` and run a clean GR00T N1.7 load test with
+   the forwarded HF token.
+2. Install/validate the official UnifoLM dependencies and run one EEF23 adapter
+   smoke request with an explicit 23-D state.
+3. Add a multi-process model manager with explicit load/unload and idle eviction.
+4. Add `gr00t` and `unifolm` services to the Docker Compose stack.
+5. Start Isaac Sim + bridge + GR00T/UnifoLM + UI only after the GPU/container
+   environment is verified.
+6. Keep WBC on legs/waist and route only joint-space arm/hand trajectories after
+   explicit preview approval. UnifoLM EEF output remains non-dispatching until
+   a separately validated EEF-to-IK stage exists.
 
 ---
 
@@ -205,6 +216,8 @@ python scripts/test_dex3_contacts.py     # headless (no running sim): 6 fingerti
 | `g1_sim/rtx_camera.py` | D435 prim, camera OmniGraph, measured optical TF |
 | `g1_sim/dex3_contacts.py` | fingertip `IsaacContactSensor` + WrenchStamped publisher |
 | `g1_sim/arm_override.py` | `/g1/arm_cmd` and `/g1/hand_cmd` (`DEX3_HAND_JOINTS`) subscribers |
+| `scripts/unifolm_ws_server.py` | lazy Unitree UnifoLM EEF23 WebSocket adapter; preview-only |
+| `scripts/test_unifolm_contract.py` | dependency-free adapter contract check |
 | `docs/TACSL_PLAN.md` | tactile roadmap (Phase 0 done) |
 
 ### Gotchas that cost hours
@@ -229,6 +242,7 @@ python scripts/test_dex3_contacts.py     # headless (no running sim): 6 fingerti
 | Model | Status | Location | Notes |
 |-------|--------|----------|-------|
 | **GR00T-N1.7-3B** | ✅ Downloaded (6.5 GB) | `~/foundation_models/GR00T-N1.7-3B` on spark02 | `REAL_G1` pretrain tag |
+| **UnifoLM-VLA-Base** | ✅ Action checkpoint; VLM companion downloading | `~/foundation_models/UnifoLM-VLA-Base` on spark02 | EEF23 preview; not yet live |
 | **Cosmos3-Edge** | ✅ Downloaded (8.6 GB) | `~/foundation_models/Cosmos3-Edge` on spark02 | Video/world model |
 | **Cosmos-Reason2-2B** | 🟡 Access check in progress | Hugging Face cache on Spark02 | `HF_TOKEN` authenticated; do not assume model load until the test completes |
 | **Qwen3.8-Flash-Next** | 🟡 In progress | spark01, llama.cpp branch `qwen4exp` | Separate OpenAI-compatible server on :8001 |
