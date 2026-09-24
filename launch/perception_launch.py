@@ -152,7 +152,7 @@ def generate_launch_description():
                         # Input
                         "num_cameras": 1,
                         "use_tf_transforms": True,
-                        "input_qos": "DEFAULT",
+                        "input_qos": "SENSOR_DATA",
 
                         # Voxel grid
                         "voxel_size": 0.05,
