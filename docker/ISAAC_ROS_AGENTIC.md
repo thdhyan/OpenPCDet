@@ -25,7 +25,7 @@ replace it with the Spark or Isaac ROS 5 container.
 
 | Consumer | Isaac Sim input |
 |---|---|
-| CuVSLAM RGBD mode | `/g1/camera/rgb`, `/g1/camera/camera_info`, converted `/g1/camera/depth_uint16`, `/g1/imu` |
+| CuVSLAM RGBD mode | `/g1/camera/rgb`, `/g1/camera/camera_info`, converted `/g1/camera/depth_uint16` (the available `/g1/imu` is reserved for a future VIO mode) |
 | NVBlox | `/g1/camera/depth`, `/g1/camera/camera_info`, `/g1/camera/rgb`, `/tf` |
 | Clock/TF | `/clock`, `/tf`, `/tf_static` |
 
@@ -75,7 +75,9 @@ not Gazebo, so there is only one simulation source: Isaac Sim.
 
 ```bash
 docker compose -f docker/docker-compose-isaac-ros.yml ps
-curl http://127.0.0.1:9091
+# rosbridge is WebSocket-only; a plain HTTP GET correctly returns 400.
+docker exec g1-agenticros-rosbridge bash -lc \
+  'source /opt/ros/jazzy/setup.bash && ros2 node list'
 # inside the Isaac ROS perception container:
 source /opt/ros/jazzy/setup.bash
 ros2 topic list | grep -E 'camera|visual_slam|nvblox|imu|tf'

@@ -24,6 +24,7 @@ services:
       dockerfile: docker/Dockerfile
       args:
         ISAAC_ROS_RELEASE: "${ISAAC_ROS_RELEASE:-4.5}"
+    image: g1-isaac-ros:4.5
     container_name: g1-isaac-sim
     profiles: ["sim"]
     network_mode: host
@@ -58,6 +59,7 @@ services:
       dockerfile: docker/Dockerfile
       args:
         ISAAC_ROS_RELEASE: "${ISAAC_ROS_RELEASE:-4.5}"
+    image: g1-isaac-ros:4.5
     container_name: g1-isaac-ros-perception
     profiles: ["perception"]
     network_mode: host
