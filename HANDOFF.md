@@ -28,8 +28,9 @@ configuration only.
 
 ### Direct validation
 
-A bounded Spark-local run with the conservative flat-ground/no-props smoke
-scene observed all of the following in the same process graph:
+A bounded Spark-local run using the local baked warehouse
+(`assets/warehouse_ira_baked.usd`, no remote asset root or props) observed
+all of the following in the same process graph:
 
 - native RGB8, converted RGB8, 32FC1 depth, mono16 depth, camera info, IMU,
   `/clock`, `/tf`, and `/tf_static`;
@@ -37,16 +38,19 @@ scene observed all of the following in the same process graph:
 - cuVSLAM odometry and path;
 - NVBlox mesh, ESDF/static map, and occupancy grid.
 
-The latest direct validation counted 170 native RGB frames, 98 converted
-RGB8 frames, 157 depth frames, 156 mono16 depth frames, 214 camera-info
-frames, 206 IMU frames, 206 joint-state frames with 43 joints, 208 clock
-messages, 127 cuVSLAM odometry frames, 127 path frames, 32 mesh messages, 30
-ESDF messages, and 30 occupancy-grid messages. `g1-isaac-sim-spark`,
-`g1-isaac-ros5-perception`, and `g1-agenticros-rosbridge-spark` were live on
-Spark; no relay container or `dl` source was running.
+The latest direct warehouse validation counted 170 native RGB frames, 115
+converted RGB8 frames, 127 depth frames, 172 mono16 depth frames, 202
+camera-info frames, 197 IMU frames, 191 joint-state frames with 43 joints,
+196 clock messages, 138 cuVSLAM odometry frames, 138 path frames, 30 mesh
+messages, and 29 each of ESDF and occupancy-grid messages.
+`g1-isaac-sim-spark`, `g1-isaac-ros5-perception`, and
+`g1-agenticros-rosbridge-spark` were live on Spark; no relay container or `dl`
+source was running.
 
 The run used no command publishers. The simulator's arm/hand/cmd-vel
-subscribers remain available only for separately approved control paths.
+subscribers remain available only for separately approved control paths. The
+remote Isaac asset-root warehouse path is not used by the primary deployment;
+it stalled during resolution in a separate test.
 
 ### Start command
 
@@ -62,15 +66,22 @@ docker compose -f docker/docker-compose-isaac-spark.yml \
   --profile g1 --profile agent up -d
 ```
 
-Use `G1_SIM_STEPS=1000` for a bounded smoke run. The default scene flags are
-`--no-ira --flat-ground --no-props --freeze-robot --no-locomotion`; clear the
-corresponding `G1_*_FLAG` variables for a full scene/locomotion run. The
-Spark-specific launch uses native `/g1/camera/rgb` because the current Isaac
-Sim image emits `rgb8`; the converter remains available for BGR/BGRA/RGBA
-sources.
+Use `G1_SIM_STEPS=1000` for a bounded smoke run. The default scene is the
+local baked warehouse with `--no-ira --no-props --freeze-robot
+--no-locomotion`; set `G1_FLAT_GROUND_FLAG=--flat-ground` and clear
+`G1_WAREHOUSE_USD_FLAG` for the smaller flat-ground scene. The Spark-specific
+launch uses native `/g1/camera/rgb` because the current Isaac Sim image emits
+`rgb8`; the converter remains available for BGR/BGRA/RGBA sources.
+
+The Spark UI is connected through the local `sim-ws` bridge on port `8766`.
+The browser uses the existing port `8080` proxies, forwards RGB/joint
+observations to GR00T N1.7, and requires the explicit **Dispatch selected
+pose** button before `/g1/arm_cmd` is published.
 
 Operational details and validation commands are in
-`docker/ISAAC_ROS_AGENTIC.md`. The old cross-machine/relay notes below are
+`docker/ISAAC_ROS_AGENTIC.md`. If Isaac Sim is restarted, recreate
+`isaac-sim`, `sim-ws`, and `isaac-ros5-perception` together so cuVSLAM resets
+its simulation-time state. The old cross-machine/relay notes below are
 historical context, not the active topology.
 
 ---
@@ -89,7 +100,7 @@ gotchas: `docs/screenshots/envs_20260924/README.md`.
 | `tabletop_wheel` (default) | 1. packing table + steering wheel | ✅ verified: stable 1000+ steps, in D435 view, `verify_sensor_tf` 11/11, `check_sensor_suite` PASS |
 | `tabletop_cluster` | 2. + wheel, R/G/B cubes, mug, soup can, mustard bottle, banana, foam brick (all semantically labelled) | ✅ verified: stable 800+ steps, both sensor checks pass, captioned |
 | `nav_people` | 3. IRA warehouse, 6 walkers, navmesh hole at the robot | ✅ verified: robot stands stable pelvis_z ≈ 0.72 m for 400+ updates with IRA humans walking nearby; no fall. Isolating fall cause to floor/box obstacles in env 4. 6 perspective captures saved (isaac_front.png, isaac_side.png, isaac_overview.png, isaac_behind.png, isaac_robot.png, isaac_top.png). |
-| `nav_people_boxes` | 4. + big/small box, navmesh holes so people route around them | 🔄 fall cause pending navmesh/box fix; env 3 (no boxes) stands stable, env 4 (with boxes) falls reproducibly at updates 100–150. See interpretation in HANDOFF.md fall diagnosis section. |
+| `nav_people_boxes` | 4. + big/small box, navmesh holes so people route around them | ✅ verified standing stable pelvis_z ≈ 0.72–0.73 m for 150+ updates with new box positions (y=3.5 m, y=4.5 m); 6 perspective captures saved. navmesh hole at ∼1.6 m per finding #7 in Plan.md. |
 | `nav_people_forearm_box` | 5. + box welded to both forearms (elbow lower limit raised to the spawn angle) | ⬜ not started; still carries TEMP debug (`_dbg_box_watch`) in `g1_sim/nav_environments.py` to delete after verification. |
 
 Rules learned the hard way:

@@ -68,9 +68,10 @@ Legend: ✅ done · 🔄 in progress · ⛔ blocked · ⬜ not started
   **verified standing stable pelvis_z ≈ 0.72 m for 400+ updates with IRA humans;
   no fall — floor/box obstacles are the fall cause for env 4**; screenshots captured,
   sensor checks pending.
-- 🔄 **Env 4 `nav_people_boxes`** — + 0.8 m/10 kg and 0.3 m/1 kg boxes with
-  their own navmesh holes (3 holes rebaked); screenshots captured, run in
-  progress at commit time.
+- ✅ **Env 4 `nav_people_boxes`** — + 0.8 m/10 kg and 0.3 m/1 kg boxes with
+  their own navmesh holes (3 holes rebaked); verified standing stable pelvis_z ≈ 0.72–0.73 m for 150+ updates
+  with new box positions (y=3.5 m, y=4.5 m); 6 perspective captures saved. Fall cause isolated to
+  box placement; navmesh hole ∼1.6 m per finding #7.
 - ⬜ **Env 5 `nav_people_forearm_box`** — box welded to both forearms
   (FixedJoints excluded from the articulation, elbow lower limit raised to
   the spawn angle, robot↔box collision filtered). Code written, **not yet
