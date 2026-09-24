@@ -18,7 +18,7 @@ RUN mkdir -p /src && cd /src && \
     git fetch --depth 1 origin "${AGENTICROS_REF}" && \
     git checkout -q --detach FETCH_HEAD
 WORKDIR /src
-RUN pnpm install --frozen-lockfile \
+RUN pnpm install --frozen-lockfile --no-optional \
     && pnpm build \
     && pnpm --filter @agenticros/agenticros-claude-code deploy --prod /opt/agenticros-mcp
 
