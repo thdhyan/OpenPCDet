@@ -1,0 +1,4 @@
+# NVIDIA Isaac ROS 4.5 NCCL pin for dl (CUDA 13.0).
+Package: libnccl2
+Pin: version 2.28.9-1+cuda13.0
+Pin-Priority: 1001
