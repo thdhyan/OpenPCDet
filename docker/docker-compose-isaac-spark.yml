@@ -1,0 +1,291 @@
+# All-on-Spark G1 deployment: Isaac Sim 6 + Isaac ROS 5 + AgenticROS.
+#
+# Isaac Sim runs in the ARM64 Isaac Lab image on DGX Spark. Isaac ROS 5.0
+# runs in the Lyrical image. Both containers use host networking and the same
+# Cyclone DDS domain/configuration, so no Zenoh or cross-host relay is needed.
+# The g1 profile also starts sim-ws on :8766 for the existing FM UI proxy.
+#
+# Start:
+#   mkdir -p /home/thakk100/.cache/g1-isaac-sim/{main,computecache,kit-cache,kit-data,home,config,data,logs,pkg}
+#   G1_ROS_DOMAIN_ID=42 G1_SIM_STEPS=0 \
+#     docker compose -f docker/docker-compose-isaac-spark.yml \
+#     --profile g1 --profile agent up -d
+#
+# G1_SIM_STEPS=0 runs indefinitely; use 1000 for a bounded smoke run.
+#
+# Env-6 LLM social-nav eval (walking G1 + named static humans + VoxelNeXt +
+# gpt-6-luna on /g1/cmd_vel) - profiles "humans" and "planner", optional "hmr".
+# Needs ../../g1_perception_ws and ../../intent-sim (with its .env) next to
+# this repo; see docs/SPARK_SOCIAL_EVAL.md:
+#   G1_EVAL_RUN=run_001 G1_SCENE_ENV=social_static G1_NO_PROPS_FLAG= \
+#   G1_FREEZE_FLAG= G1_NO_LOCO_FLAG= \
+#   G1_RECORD_FLAG="--record-dir logs/eval/run_001/cams" \
+#     docker compose -f docker/docker-compose-isaac-spark.yml \
+#     --profile g1 --profile humans --profile planner up -d
+
+services:
+  isaac-sim:
+    image: "${ISAAC_SIM_IMAGE:-nvcr.io/nvidia/isaac-lab:3.0.0-beta2-post1}"
+    container_name: "g1-isaac-sim-spark${G1_CONTAINER_SUFFIX-}"  # suffix: second sim on another ROS domain
+    profiles: ["g1"]
+    network_mode: host
+    user: "1001:1001"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ISAAC_ROS_GPU:-0}"]
+              capabilities: [gpu]
+    environment:
+      ACCEPT_EULA: "Y"
+      PRIVACY_CONSENT: "N"
+      HOME: /home/thakk100
+      DOCKER_USER_HOME: /home/thakk100
+      ISAACLAB_PATH: /isaac-sim
+      NVIDIA_DRIVER_CAPABILITIES: all
+      NVIDIA_VISIBLE_DEVICES: "${ISAAC_ROS_GPU:-0}"
+      CUDA_VISIBLE_DEVICES: "${ISAAC_ROS_GPU:-0}"
+      VK_DRIVER_FILES: /etc/vulkan/icd.d/nvidia_icd.json
+      ROS_DOMAIN_ID: "${G1_ROS_DOMAIN_ID:-42}"
+      ROS_DISTRO: jazzy
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+      CYCLONEDDS_URI: file:///etc/cyclonedds/cyclonedds.xml
+      ISAAC_SIM_ROOT: /isaac-sim
+      ISAACSIM_ROOT_PATH: /isaac-sim
+      LD_LIBRARY_PATH: /isaac-sim/exts/isaacsim.ros2.core/jazzy/lib:/usr/local/cuda-13.0/lib64:/isaac-sim/kit/python/lib/python3.12/site-packages/nvidia/cu13/lib
+      PYTHONPATH: /isaac-sim/exts/isaacsim.ros2.core/jazzy/rclpy:/workspace/thesis-sim
+      G1_SIM_STEPS: "${G1_SIM_STEPS:-0}"
+      G1_SCENE_ENV: "${G1_SCENE_ENV:-tabletop_wheel}"
+      G1_LOCAL_CLUTTER_FLAG: "${G1_LOCAL_CLUTTER_FLAG-}"
+      G1_EXPERIENCE: "${G1_EXPERIENCE:-base}"
+      G1_NO_IRA_FLAG: "${G1_NO_IRA_FLAG---no-ira}"
+      G1_FLAT_GROUND_FLAG: "${G1_FLAT_GROUND_FLAG-}"
+      G1_NO_PROPS_FLAG: "${G1_NO_PROPS_FLAG---no-props}"
+      G1_FREEZE_FLAG: "${G1_FREEZE_FLAG---freeze-robot}"
+      G1_NO_LOCO_FLAG: "${G1_NO_LOCO_FLAG---no-locomotion}"
+      G1_WAREHOUSE_USD_FLAG: "${G1_WAREHOUSE_USD_FLAG---warehouse-usd /workspace/thesis-sim/assets/warehouse_ira_baked.usd}"
+      G1_RECORD_FLAG: "${G1_RECORD_FLAG-}"
+    volumes:
+      - ../:/workspace/thesis-sim:rw
+      - ./cyclonedds_isaac_ros.xml:/etc/cyclonedds/cyclonedds.xml:ro
+      - ${ISAAC_SIM_CACHE_ROOT:-/home/thakk100/.cache/g1-isaac-sim}/main:/isaac-sim/.cache:rw
+      - ${ISAAC_SIM_CACHE_ROOT:-/home/thakk100/.cache/g1-isaac-sim}/kit-cache:/isaac-sim/kit/cache:rw
+      - ${ISAAC_SIM_CACHE_ROOT:-/home/thakk100/.cache/g1-isaac-sim}/kit-data:/isaac-sim/kit/data:rw
+      - ${ISAAC_SIM_CACHE_ROOT:-/home/thakk100/.cache/g1-isaac-sim}/home:/home/thakk100:rw
+      - ${ISAAC_SIM_CACHE_ROOT:-/home/thakk100/.cache/g1-isaac-sim}/computecache:/isaac-sim/.nv/ComputeCache:rw
+      - ${ISAAC_SIM_CACHE_ROOT:-/home/thakk100/.cache/g1-isaac-sim}/config:/isaac-sim/.nvidia-omniverse/config:rw
+      - ${ISAAC_SIM_CACHE_ROOT:-/home/thakk100/.cache/g1-isaac-sim}/data:/isaac-sim/.local/share/ov/data:rw
+      - ${ISAAC_SIM_CACHE_ROOT:-/home/thakk100/.cache/g1-isaac-sim}/logs:/isaac-sim/.nvidia-omniverse/logs:rw
+      - ${ISAAC_SIM_CACHE_ROOT:-/home/thakk100/.cache/g1-isaac-sim}/logs:/isaac-sim/kit/logs:rw
+      - ${ISAAC_SIM_CACHE_ROOT:-/home/thakk100/.cache/g1-isaac-sim}/pkg:/isaac-sim/.local/share/ov/pkg:rw
+      - ${ISAAC_SIM_HUB_CACHE:-/home/thakk100/.cache/ov/hub}:/var/cache/hub:rw
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - >-
+        exec /isaac-sim/python.sh
+        /workspace/thesis-sim/scripts/g1_warehouse_sim.py
+        --headless
+        --experience "$${G1_EXPERIENCE}"
+        --steps "$${G1_SIM_STEPS}"
+        --env "$${G1_SCENE_ENV}"
+        $${G1_LOCAL_CLUTTER_FLAG}
+        $${G1_NO_IRA_FLAG}
+        $${G1_FLAT_GROUND_FLAG}
+        $${G1_NO_PROPS_FLAG}
+        $${G1_FREEZE_FLAG}
+        $${G1_NO_LOCO_FLAG}
+        $${G1_WAREHOUSE_USD_FLAG}
+        $${G1_RECORD_FLAG}
+        --config-dir assets/lidar_configs_rotary
+        --wbc-mode internal
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f '[g]1_warehouse_sim.py' >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 5m
+
+  sim-ws:
+    image: "${ISAAC_SIM_IMAGE:-nvcr.io/nvidia/isaac-lab:3.0.0-beta2-post1}"
+    container_name: g1-sim-ws-spark
+    profiles: ["g1"]
+    network_mode: host
+    user: "1001:1001"
+    environment:
+      ROS_DOMAIN_ID: "${G1_ROS_DOMAIN_ID:-42}"
+      ROS_DISTRO: jazzy
+      HOME: /home/thakk100
+      ROS_LOG_DIR: /home/thakk100/.ros/log
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+      CYCLONEDDS_URI: file:///etc/cyclonedds/cyclonedds.xml
+      LD_LIBRARY_PATH: /isaac-sim/exts/isaacsim.ros2.core/jazzy/lib:/usr/local/cuda-13.0/lib64:/isaac-sim/kit/python/lib/python3.12/site-packages/nvidia/cu13/lib
+      PYTHONPATH: /isaac-sim/exts/isaacsim.ros2.core/jazzy/rclpy:/workspace/thesis-sim
+    volumes:
+      - ../:/workspace/thesis-sim:ro
+      - ./cyclonedds_isaac_ros.xml:/etc/cyclonedds/cyclonedds.xml:ro
+      - ${ISAAC_SIM_CACHE_ROOT:-/home/thakk100/.cache/g1-isaac-sim}/home:/home/thakk100:rw
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - exec /isaac-sim/python.sh /workspace/thesis-sim/scripts/sim_ws_bridge.py --port 8766 --rate-hz 10
+    depends_on:
+      - isaac-sim
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f '[s]im_ws_bridge.py' >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  isaac-ros5-perception:
+    image: "${ISAAC_ROS5_IMAGE:-g1-isaac-ros5:5.0.0}"
+    container_name: g1-isaac-ros5-perception
+    profiles: ["g1"]
+    network_mode: host
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ISAAC_ROS_GPU:-0}"]
+              capabilities: [gpu]
+    environment:
+      ISAAC_ROS_GPU: "${ISAAC_ROS_GPU:-0}"
+      CUDA_VISIBLE_DEVICES: "${ISAAC_ROS_GPU:-0}"
+      NVIDIA_VISIBLE_DEVICES: "${ISAAC_ROS_GPU:-0}"
+      ROS_DOMAIN_ID: "${G1_ROS_DOMAIN_ID:-42}"
+      ROS_DISTRO: lyrical
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+      CYCLONEDDS_URI: file:///etc/cyclonedds/cyclonedds.xml
+    volumes:
+      - ../:/workspace/thesis-sim:ro
+      - ./cyclonedds_isaac_ros.xml:/etc/cyclonedds/cyclonedds.xml:ro
+    entrypoint: ["/workspace/thesis-sim/docker/ros-perception-entrypoint.sh"]
+    command:
+      - ros2
+      - launch
+      - /workspace/thesis-sim/launch/perception_launch.py
+      - cuvslam_package:=isaac_ros_cuvslam
+      - rgb_topic:=/g1/camera/rgb
+    depends_on:
+      - isaac-sim
+    restart: unless-stopped
+
+  agenticros-rosbridge:
+    image: "${AGENTICROS_IMAGE:-g1-agenticros-rosbridge:lyrical}"
+    container_name: g1-agenticros-rosbridge-spark
+    profiles: ["agent"]
+    network_mode: host
+    ipc: host
+    environment:
+      ROS_DOMAIN_ID: "${G1_ROS_DOMAIN_ID:-42}"
+      ROS_DISTRO: lyrical
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+      CYCLONEDDS_URI: file:///etc/cyclonedds/cyclonedds.xml
+    volumes:
+      - ./cyclonedds_isaac_ros.xml:/etc/cyclonedds/cyclonedds.xml:ro
+    restart: unless-stopped
+
+  # ── Env-6 social-nav eval ────────────────────────────────────────────────
+  human-detection:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.human-perception-spark
+      target: detection
+      additional_contexts:
+        perception_ws: ${G1_PERCEPTION_WS:-../../g1_perception_ws}
+    image: "${HUMAN_DETECTION_IMAGE:-g1-human-detection:spark}"
+    container_name: g1-human-detection-spark
+    profiles: ["humans"]
+    network_mode: host
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ISAAC_ROS_GPU:-0}"]
+              capabilities: [gpu]
+    environment:
+      ROS_DOMAIN_ID: "${G1_ROS_DOMAIN_ID:-42}"
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+      CYCLONEDDS_URI: file:///etc/cyclonedds/cyclonedds.xml
+    volumes:
+      - ../:/workspace/thesis-sim:ro
+      - ./cyclonedds_isaac_ros.xml:/etc/cyclonedds/cyclonedds.xml:ro
+      - ${G1_PERCEPTION_WS:-../../g1_perception_ws}/pt/voxelnext_nuscenes.pth:/checkpoints/voxelnext_nuscenes.pth:ro
+    command: ["ros2", "launch", "/workspace/thesis-sim/launch/human_detection_sim.launch.py"]
+    restart: unless-stopped
+
+  human-hmr:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.human-perception-spark
+      target: hmr
+      additional_contexts:
+        perception_ws: ${G1_PERCEPTION_WS:-../../g1_perception_ws}
+    image: "${HUMAN_HMR_IMAGE:-g1-human-hmr:spark}"
+    container_name: g1-human-hmr-spark
+    profiles: ["hmr"]
+    network_mode: host
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ISAAC_ROS_GPU:-0}"]
+              capabilities: [gpu]
+    environment:
+      ROS_DOMAIN_ID: "${G1_ROS_DOMAIN_ID:-42}"
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+      CYCLONEDDS_URI: file:///etc/cyclonedds/cyclonedds.xml
+    volumes:
+      - ./cyclonedds_isaac_ros.xml:/etc/cyclonedds/cyclonedds.xml:ro
+      - ${G1_PERCEPTION_WS:-../../g1_perception_ws}/LiDAR-HMR/ckpts:/ws/LiDAR-HMR/ckpts:ro
+      - ${G1_PERCEPTION_WS:-../../g1_perception_ws}/LiDAR-HMR/smplx_models:/ws/LiDAR-HMR/smplx_models:ro
+    restart: unless-stopped
+
+  llm-planner:
+    build:
+      context: .
+      dockerfile: Dockerfile.llm-planner-spark
+    image: "${LLM_PLANNER_IMAGE:-g1-llm-planner:spark}"
+    container_name: g1-llm-planner-spark
+    profiles: ["planner"]
+    user: "1001:1001"  # same as isaac-sim: both write under logs/eval/<run>
+    network_mode: host
+    environment:
+      ROS_DOMAIN_ID: "${G1_ROS_DOMAIN_ID:-42}"
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+      CYCLONEDDS_URI: file:///etc/cyclonedds/cyclonedds.xml
+      G1_TASK: "${G1_TASK:-Go talk to Dhyan.}"
+      G1_LLM_MODEL: "${G1_LLM_MODEL:-gpt-6-luna}"
+      G1_EVAL_RUN: "${G1_EVAL_RUN:-latest}"
+      HOME: /tmp  # uid 1001 has no home in this image; rclpy needs a log dir
+      ROS_LOG_DIR: /tmp/ros_log
+    volumes:
+      - ../:/workspace/thesis-sim:rw
+      - ./cyclonedds_isaac_ros.xml:/etc/cyclonedds/cyclonedds.xml:ro
+      # LLMClient + the .env with OPENAI_API_KEY; read-only, never baked into the image
+      - ${INTENT_SIM_DIR:-../../intent-sim}:/intent-sim:ro
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - >-
+        source /opt/ros/jazzy/setup.bash &&
+        exec python3 -u /workspace/thesis-sim/planner/llm_velocity_planner.py
+        --task "$${G1_TASK}" --model "$${G1_LLM_MODEL}"
+        --out /workspace/thesis-sim/logs/eval/$${G1_EVAL_RUN}
+    depends_on:
+      - human-detection
+    restart: "no"

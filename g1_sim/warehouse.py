@@ -14,6 +14,8 @@ sample code: resolve through ``get_assets_root_path()`` first.
 
 from __future__ import annotations
 
+import os
+
 WAREHOUSE_USD = "/Isaac/Environments/Simple_Warehouse/warehouse.usd"
 WAREHOUSE_FORKLIFTS_USD = "/Isaac/Environments/Simple_Warehouse/warehouse_with_forklifts.usd"
 SIMPLE_ROOM_USD = "/Isaac/Environments/Simple_Room/simple_room.usd"
@@ -36,15 +38,22 @@ def resolve_nucleus_path(rel_path: str) -> str:
 
 
 def load_environment(stage, usd_rel_path: str = WAREHOUSE_USD, prim_path: str = "/World/Env") -> str:
-    """Reference a Nucleus environment USD onto the stage.
+    """Reference a Nucleus or local environment USD onto the stage.
 
-    Returns the resolved URL actually used (for logging). Raises on failure -
-    callers decide the flat-ground fallback, matching the pattern already
-    used for the robot USD not existing.
+    ``/Isaac/...`` paths are resolved through the current Nucleus asset root;
+    all other paths are treated as local USD paths. Returns the resolved path
+    actually used (for logging). Raises on failure so callers can choose the
+    flat-ground fallback.
     """
     import isaacsim.core.utils.stage as stage_utils
 
-    resolved = resolve_nucleus_path(usd_rel_path)
+    if usd_rel_path.startswith("/Isaac/"):
+        resolved = resolve_nucleus_path(usd_rel_path)
+    else:
+        local_path = os.path.expanduser(usd_rel_path)
+        if not os.path.isabs(local_path):
+            local_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), local_path)
+        resolved = os.path.abspath(local_path)
     stage_utils.add_reference_to_stage(usd_path=resolved, prim_path=prim_path)
     return resolved
 

@@ -1,0 +1,4 @@
+*
+!docker/entrypoint_perception.sh
+!perception_ros
+perception_ros/**/__pycache__

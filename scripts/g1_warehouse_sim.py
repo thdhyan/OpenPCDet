@@ -123,7 +123,9 @@ parser.add_argument(
 )
 parser.add_argument("--no-ira", action="store_true", help="Skip IRA humans/carters even for --env presets that use IRA.")
 parser.add_argument("--flat-ground", action="store_true", help="Skip the remote warehouse and use the local validation ground.")
+parser.add_argument("--warehouse-usd", default=None, help="Optional local warehouse USD; avoids the remote Isaac asset root.")
 parser.add_argument("--no-props", action="store_true", help="Skip environment preset props (useful for sensor bring-up).")
+parser.add_argument("--local-clutter", action="store_true", help="Use Spark-safe table + two-cube layout for env 2 instead of remote assets.")
 parser.add_argument("--experience", choices=("base", "full"), default="full", help="Isaac Sim experience; use base for a lean headless Spark run.")
 parser.add_argument("--num-humans", type=int, default=None, help="IRA wandering characters (default: the --env preset's). 0 disables the group.")
 parser.add_argument("--num-carters", type=int, default=1, help="IRA wandering Nova Carters. 0 disables the group.")
@@ -176,6 +178,14 @@ parser.add_argument(
     "once, at --capture-step, then keep running.",
 )
 parser.add_argument("--capture-step", type=int, default=600, help="Step at which --capture-dir views are taken.")
+parser.add_argument(
+    "--record-dir",
+    type=str,
+    default=None,
+    help="Record the 1080p eval cameras (robot D435 POV, one POV per /World/Humans person, top-down, G1 chase cam) as JPEG "
+    "sequences here; see g1_sim/eval_cameras.py and scripts/frames_to_mp4.sh.",
+)
+parser.add_argument("--record-every", type=int, default=12, help="Steps between --record-dir frames (12 = 5 Hz).")
 parser.add_argument("--log-props", action="store_true", help="Print PhysX positions of /World/Props rigid bodies every 300 steps.")
 parser.add_argument(
     "--caption",
@@ -287,7 +297,8 @@ import omni.timeline
 import omni.usd
 from pxr import Gf, UsdGeom, UsdPhysics, Usd
 
-from g1_sim.arm_override import DEX3_HAND_JOINTS, HAND_CMD_TOPIC, ArmTargetSubscriber
+# /g1/arm_cmd is available even when locomotion/WBC is disabled.
+from g1_sim.arm_override import ARM_JOINTS, DEX3_HAND_JOINTS, HAND_CMD_TOPIC, ArmTargetSubscriber
 from g1_sim.g1_robot import DEFAULT_USD, load_g1
 from g1_sim.rtx_camera import attach_cmd_vel_subscriber
 from g1_sim.rtx_lidar import MID360_POS, blind_radius
@@ -345,6 +356,9 @@ def enable_extensions() -> None:
 
         vlm_caption.enable()
 
+    if args_cli.record_dir:  # the lean "base" experience does not autoload Replicator
+        manager.set_extension_enabled_immediate("omni.replicator.core", True)
+
     if not args_cli.headless:
         for ext in GUI_EXTENSIONS:
             manager.set_extension_enabled_immediate(ext, True)
@@ -383,13 +397,15 @@ def build_scene_fallback(stage) -> None:
         print("[WH] environment     : local flat ground (--flat-ground)")
     else:
         try:
-            resolved = load_environment(stage, WAREHOUSE_USD, "/World/Env")
+            warehouse_usd = args_cli.warehouse_usd or WAREHOUSE_USD
+            resolved = load_environment(stage, warehouse_usd, "/World/Env")
             print(f"[WH] environment     : {resolved}")
         except Exception as e:
             print(f"[WH] warehouse load failed ({e}), using flat ground")
             build_flat_ground(stage)
 
-
+    if not ENV.static_targets:
+        return
     for i, (x, y) in enumerate(PEDESTRIANS):
         box = UsdGeom.Cube.Define(stage, f"/World/targets/pedestrian_{i}")
         box.CreateSizeAttr(1.0)
@@ -492,7 +508,13 @@ def main() -> None:
             print(f"[WH] carter cameras  : {stripped} deactivated (keep with --keep-carter-cameras)")
 
     print(f"[WH] env             : {args_cli.env} - {ENV.description}  (IRA {'on' if ira_ok else 'off'})")
-    if ENV.build_props is not None and not args_cli.no_props:
+    if args_cli.local_clutter and not args_cli.no_props:
+        if args_cli.env != "tabletop_cluster":
+            raise ValueError("--local-clutter is only defined for --env tabletop_cluster")
+        from g1_sim.environments import build_tabletop_cluster_local
+        build_tabletop_cluster_local(stage)
+        print("[WH] props           : local Spark-safe env-2 clutter")
+    elif ENV.build_props is not None and not args_cli.no_props:
         ENV.build_props(stage)
     elif args_cli.no_props:
         print("[WH] props           : skipped (--no-props)")
@@ -503,7 +525,7 @@ def main() -> None:
     # wires the ROS2 graphs. create_articulation=False: pelvis gets wrapped
     # AFTER sim.reset() below, the order this script was verified with.
     labels = {ROBOT_PRIM: "robot"}
-    if not ira_ok:
+    if not ira_ok and ENV.static_targets:
         labels.update({f"/World/targets/pedestrian_{i}": "pedestrian" for i in range(len(PEDESTRIANS))})
     g1 = load_g1(
         prim_path=ROBOT_PRIM,
@@ -556,7 +578,6 @@ def main() -> None:
     joint_cmd_sub = None
     if ENABLE_LOCOMOTION:
         from g1_sim.wbc_bridge import (
-            ARM_JOINTS,
             ARM_KD,
             ARM_KP,
             ALL_JOINTS,
@@ -670,6 +691,13 @@ def main() -> None:
     timeline = omni.timeline.get_timeline_interface()
     timeline.play()
     print(f"[WH] timeline        : playing={timeline.is_playing()}")
+    recorder = None
+    if args_cli.record_dir:
+        from g1_sim.eval_cameras import EvalRecorder
+        from g1_sim.social_environments import read_humans
+
+        recorder = EvalRecorder(stage, REPO / args_cli.record_dir, read_humans(stage),
+                                robot_camera=g1.camera_prim, every=args_cli.record_every)
     print("[WH] running\n")
 
     step = 0
@@ -757,6 +785,9 @@ def main() -> None:
                 hand_tgt = hand_sub.get_targets()
                 if hand_tgt is not None:
                     robot_articulation.set_joint_position_targets(hand_tgt[None, :], joint_names=DEX3_HAND_JOINTS)
+
+            if recorder is not None:
+                recorder.step(step, *robot_articulation.get_world_poses())
 
             sent = g1.step(sim.current_time)
             if sent:

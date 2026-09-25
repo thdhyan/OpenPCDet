@@ -11,7 +11,8 @@ pipeline; a preset only decides
 Both hooks run before ``sim.reset()``. The robot always spawns at the origin
 with yaw +90 deg, i.e. facing +y (IsaacLab locomanip pose).
 
-Navigation presets (3-5) live in ``g1_sim.nav_environments``.
+Navigation presets (3-5) live in ``g1_sim.nav_environments``; the named static
+humans of preset 6 in ``g1_sim.social_environments``.
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ class EnvSpec:
     num_humans: int = 0
     build_props: Callable | None = None  # (stage) -> None
     post_robot: Callable | None = None  # (stage, robot_prim_path) -> None
+    static_targets: bool = True  # fallback scene adds the LiDAR test cubes (g1_warehouse_sim.PEDESTRIANS)
 
 
 def asset_url(rel: str) -> str:
@@ -189,36 +191,39 @@ def build_tabletop_wheel(stage) -> None:
 
 # --- env 2 --------------------------------------------------------------------
 
-YCB = "Isaac/Props/YCB/Axis_Aligned"
-YCB_UPRIGHT = (-90.0, 0.0, 0.0)  # Axis_Aligned YCB meshes have "up" along -Y inside a Z-up file (+90 put the mug upside down)
+# Keep env 2 deliberately small: one large red target and one small green
+# target. The table is the only supporting prop.
+CLUSTER_CUBES = [
+    # name, size (m), (x, y), rgb, mass (kg), semantic label
+    ("LargeRedCube", (0.10, 0.10, 0.10), (-0.15, 0.37), (0.85, 0.08, 0.08), 0.12, "large red cube"),
+    ("SmallGreenCube", (0.05, 0.05, 0.05), (-0.04, 0.44), (0.08, 0.65, 0.15), 0.03, "small green cube"),
+]
 
-# (name, usd, (x, y) on the table, yaw deg, mass kg, scale, semantic label). Robot at the origin facing
-# +y; everything sits in the D435 view left of the tray (tray spans x 0.26-0.99).
-CLUSTER_PROPS = [
-    ("SteeringWheel", WHEEL_USD, (-0.33, 0.53), 0.0, 0.5, 0.5, "steering wheel"),
-    ("Mug", f"{YCB}/025_mug.usd", (-0.10, 0.56), 30.0, 0.12, None, "mug"),
-    ("SoupCan", f"{YCB}/005_tomato_soup_can.usd", (0.05, 0.55), 0.0, 0.35, None, "soup can"),
-    ("MustardBottle", f"{YCB}/006_mustard_bottle.usd", (-0.20, 0.66), 20.0, 0.4, None, "mustard bottle"),
-    ("Banana", f"{YCB}/011_banana.usd", (-0.26, 0.37), 60.0, 0.12, None, "banana"),
-    ("FoamBrick", f"{YCB}/061_foam_brick.usd", (0.14, 0.47), 0.0, 0.03, None, "foam brick"),
-]
-CLUSTER_CUBES = [  # (name, (x, y), rgb)
-    ("RedCube", (-0.15, 0.37), (0.85, 0.1, 0.1)),
-    ("GreenCube", (-0.04, 0.44), (0.1, 0.7, 0.2)),
-    ("BlueCube", (0.07, 0.36), (0.1, 0.25, 0.85)),
-]
-CUBE_EDGE = 0.05
+
+def _spawn_tabletop_cubes(stage) -> None:
+    for name, size, (x, y), rgb, mass, label in CLUSTER_CUBES:
+        spawn_box(
+            stage,
+            f"/World/Props/{name}",
+            size,
+            (x, y, TABLE_SURFACE_Z + size[2] / 2 + SURFACE_GAP),
+            mass=mass,
+            color=rgb,
+            label=label,
+        )
 
 
 def build_tabletop_cluster(stage) -> None:
     add_table(stage)
-    for name, usd, (x, y), yaw, mass, scale, label in CLUSTER_PROPS:
-        rpy = (0.0, 0.0, yaw) if usd == WHEEL_USD else (YCB_UPRIGHT[0], 0.0, yaw)
-        spawn_usd_prop(stage, f"/World/Props/{name}", usd, (x, y, 0.0), rpy_deg=rpy, scale=scale, mass=mass,
-                       label=label, on_surface=TABLE_SURFACE_Z)
-    for name, (x, y), rgb in CLUSTER_CUBES:
-        spawn_box(stage, f"/World/Props/{name}", CUBE_EDGE, (x, y, TABLE_SURFACE_Z + CUBE_EDGE / 2 + SURFACE_GAP),
-                  mass=0.05, color=rgb, label=f"{name[:-4].lower()} cube")
+    _spawn_tabletop_cubes(stage)
+
+
+def build_tabletop_cluster_local(stage) -> None:
+    """Build the env-2 table and two-cube layout without remote assets."""
+    spawn_box(stage, "/World/Props/PackingTable", (1.20, 0.80, 0.08),
+              (0.0, 0.55, TABLE_SURFACE_Z - 0.04), mass=1.0,
+              color=(0.48, 0.30, 0.16), kinematic=True, label="table")
+    _spawn_tabletop_cubes(stage)
 
 
 # --- env 3-5 (implemented in g1_sim.nav_environments) ----------------------
@@ -233,10 +238,19 @@ def _nav(fn_name: str) -> Callable:
     return hook
 
 
+def _social(fn_name: str) -> Callable:
+    def hook(*args):
+        from g1_sim import social_environments
+
+        return getattr(social_environments, fn_name)(*args)
+
+    return hook
+
+
 ENVIRONMENTS: dict[str, EnvSpec] = {
     "tabletop_wheel": EnvSpec("1. packing table + steering wheel", build_props=build_tabletop_wheel),
     "tabletop_cluster": EnvSpec(
-        "2. packing table + cluster (wheel, cubes, mug, can, bottle, banana, brick)",
+        "2. packing table + large red cube + small green cube",
         build_props=build_tabletop_cluster,
     ),
     "nav_people": EnvSpec(
@@ -250,6 +264,11 @@ ENVIRONMENTS: dict[str, EnvSpec] = {
     "nav_people_forearm_box": EnvSpec(
         "5. env 3 + box attached to the robot's forearms", ira=True, num_humans=6,
         build_props=_nav("build_nav_people"), post_robot=_nav("attach_forearm_box"),
+    ),
+    "social_static": EnvSpec(
+        "6. warehouse + 4 named static humans (LLM social-nav eval, /sim/humans)",
+        build_props=_social("build_social_static"), post_robot=_social("attach_humans_publisher"),
+        static_targets=False,
     ),
 }
 

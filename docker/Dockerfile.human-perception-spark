@@ -1,0 +1,115 @@
+# LiDAR human perception for DGX Spark (arm64, GB10 = sm_121), two targets:
+#
+#   detection : lidar_bridge + VoxelNeXt (livox_detection_node)
+#   hmr       : LiDAR-HMR smpl_hmr_node
+#
+# Neither spconv/cumm nor torch-scatter/torch-cluster/pointops publish arm64
+# wheels, so they are compiled here (torch ops for sm_120, which runs on the
+# GB10's sm_121; spconv for sm_121 exactly, see below). CUDA 12.9 (runs on the
+# Spark's CUDA 13 driver) + the official torch 2.8.0+cu129 aarch64 wheel.
+#
+# Sources come from two build contexts (see docker-compose-isaac-spark.yml):
+#   default context      = this repo           -> perception_ros/
+#   perception_ws context = ../g1_perception_ws -> VoxelNeXt, LiDAR-HMR, pointops
+# Weights are mounted at runtime, never baked in.
+
+ARG CUDA_BASE=nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04
+
+# ── base: CUDA + ROS Jazzy + torch ──────────────────────────────────────────
+FROM ${CUDA_BASE} AS base
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CUDA_HOME=/usr/local/cuda \
+    PATH=/usr/local/cuda/bin:$PATH \
+    TORCH_CUDA_ARCH_LIST="12.0" \
+    MAX_JOBS=12 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl gnupg ca-certificates git build-essential cmake ninja-build \
+        python3-pip python3-dev \
+    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc \
+        | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+        http://packages.ros.org/ros2/ubuntu noble main" > /etc/apt/sources.list.d/ros2.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        ros-jazzy-ros-base \
+        ros-jazzy-rmw-cyclonedds-cpp \
+        ros-jazzy-vision-msgs \
+        ros-jazzy-tf2-ros-py \
+        ros-jazzy-tf2-sensor-msgs \
+        ros-jazzy-message-filters \
+        ros-jazzy-sensor-msgs-py \
+        python3-colcon-common-extensions \
+    && apt-get remove -y python3-numpy || true \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --index-url https://download.pytorch.org/whl/cu129 \
+        torch==2.8.0 torchvision==0.23.0 \
+    && pip3 install "numpy<2" pyyaml easydict tqdm
+
+WORKDIR /ws
+COPY docker/entrypoint_perception.sh /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+
+# ── detection: spconv + pcdet (VoxelNeXt) ───────────────────────────────────
+FROM base AS detection
+
+# cumm/spconv AOT builds (no JIT at runtime): pin the versions the x86 images use.
+# spconv 2.3.8 requires cumm <0.8, whose arch table stops at 9.0 - add 12.0/12.1.
+# spconv picks a prebuilt kernel only on an EXACT arch match (else it falls back
+# to NVRTC, which fails on CUDA 12.9), so these kernels are sm_121 = GB10.
+RUN pip3 install pccm ccimport pybind11 \
+    && git clone --depth 1 -b v0.7.11 https://github.com/FindDefinition/cumm /tmp/cumm \
+    && git clone --depth 1 -b v2.3.8 https://github.com/traveller59/spconv /tmp/spconv \
+    && sed -i "s/'8.6', '8.9', '9.0'$/'8.6', '8.9', '9.0', '12.0', '12.1',/" /tmp/cumm/cumm/common.py \
+    && grep -q "'9.0', '12.0', '12.1'," /tmp/cumm/cumm/common.py \
+    && cd /tmp/cumm && CUMM_DISABLE_JIT=1 CUMM_CUDA_ARCH_LIST="12.1" pip3 install --no-build-isolation . \
+    && cd /tmp/spconv && SPCONV_DISABLE_JIT=1 CUMM_CUDA_ARCH_LIST="12.1" pip3 install --no-build-isolation . \
+    && rm -rf /tmp/cumm /tmp/spconv
+
+# numpy stays Debian's 1.26.4 (ROS depends on it; pip cannot uninstall it)
+RUN pip3 install numpy==1.26.4 llvmlite numba "scikit-image<0.25" SharedArray \
+        "opencv-python-headless<4.12" matplotlib
+# voxelnext_model.py wraps the net in torch.compile; Triton's ptxas has no sm_121a
+ENV TORCHDYNAMO_DISABLE=1
+
+COPY --from=perception_ws VoxelNeXt/setup.py VoxelNeXt/setup.py
+COPY --from=perception_ws VoxelNeXt/pcdet VoxelNeXt/pcdet
+COPY --from=perception_ws VoxelNeXt/tools/cfgs VoxelNeXt/tools/cfgs
+# drop the x86 .so files so build_ext recompiles every op for arm64
+RUN find VoxelNeXt -name "*.so" -delete && cd VoxelNeXt && python3 setup.py develop
+
+COPY perception_ros/livox_detection src/livox_detection
+COPY perception_ros/g1_perception src/g1_perception
+RUN . /opt/ros/jazzy/setup.sh && colcon build --symlink-install --packages-select livox_detection g1_perception
+
+CMD ["ros2", "launch", "/workspace/thesis-sim/launch/human_detection_sim.launch.py"]
+
+# ── hmr: LiDAR-HMR (PTv2 backbone -> torch-scatter/cluster, pointops) ───────
+FROM base AS hmr
+
+# numpy stays Debian's 1.26.4 (ROS depends on it; pip cannot uninstall it)
+RUN echo "numpy==1.26.4" > /etc/pip-constraints.txt
+ENV PIP_CONSTRAINT=/etc/pip-constraints.txt
+# FORCE_CUDA: there is no GPU during `docker build`; without it these build CPU-only
+RUN FORCE_CUDA=1 pip3 install --no-build-isolation torch-scatter torch-cluster
+RUN pip3 install torch-geometric timm einops transformers numba "smplx>=0.1.28" chumpy \
+        transforms3d scikit-learn yacs scipy
+
+COPY --from=perception_ws dapt/pointcept_src/libs/pointops /tmp/pointops
+RUN cd /tmp/pointops && pip3 install --no-build-isolation . && rm -rf /tmp/pointops
+
+# source only: ckpts/ and smplx_models/smpl/SMPL_NEUTRAL.pkl are mounted
+COPY --from=perception_ws LiDAR-HMR/models LiDAR-HMR/models
+COPY --from=perception_ws LiDAR-HMR/configs LiDAR-HMR/configs
+COPY perception_ros/mesh_utils.py mesh_utils.py
+COPY perception_ros/g1_perception src/g1_perception
+RUN . /opt/ros/jazzy/setup.sh && colcon build --symlink-install --packages-select g1_perception
+
+CMD ["ros2", "run", "g1_perception", "smpl_hmr_node", "--ros-args", \
+     "-p", "checkpoint:=humanm3", "-p", "device:=cuda", \
+     "-p", "detection_topic:=/g1/detections/livox", \
+     "-p", "cloud_topic:=/g1/lidar/points_pelvis", \
+     "-p", "use_sim_time:=true"]

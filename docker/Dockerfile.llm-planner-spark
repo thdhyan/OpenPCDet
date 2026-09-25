@@ -1,0 +1,11 @@
+# LLM velocity planner (planner/llm_velocity_planner.py) for DGX Spark.
+# Code is bind-mounted from this repo; intent-sim (LLMClient + .env keys) is
+# bind-mounted read-only at /intent-sim - neither is baked into the image.
+FROM ros:jazzy-ros-base
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ros-jazzy-rmw-cyclonedds-cpp ros-jazzy-vision-msgs python3-pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --break-system-packages --no-cache-dir "openai>=2" python-dotenv
+
+ENV INTENT_SIM_DIR=/intent-sim
